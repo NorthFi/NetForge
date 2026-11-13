@@ -1,0 +1,31 @@
+# root/.github/workflows/netforge-ci.yml
+name: NetForge quality checks
+
+on:
+  push:
+    branches:
+      - netforge-isp-manager
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: PHP, browser JS and API smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Versions
+        run: |
+          php --version
+          node --version
+          curl --version
+      - name: Validate PHP syntax
+        run: php -l api/index.php
+      - name: Validate browser JavaScript
+        run: node tests/check-frontend.mjs
+      - name: API smoke test
+        run: bash tests/api-smoke.sh
