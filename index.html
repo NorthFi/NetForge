@@ -169,9 +169,55 @@ function access(x){if(!x)return;let ip=x.ip||'';if(!/^[a-zA-Z0-9.:-]+$/.test(ip)
 function scripts(){list('scripts',['name','language','risk','description']);document.querySelector('#content').insertAdjacentHTML('beforeend','<div class="notice">Scripts are stored as text only. Execution, targeting, scheduling and credential access remain disabled until a trusted automation agent is connected.</div>')}
 function settings(){let el=document.querySelector('#content');el.insertAdjacentHTML('beforeend','<h2>Settings</h2><div class="tabs" id="settings-tabs"></div><div id="settings-body"></div>');let active='branches';function draw(){document.querySelector('#settings-tabs').innerHTML=['branches','technicians','staff','packages','sectors'].map(c=>'<button data-c="'+c+'" class="'+(active===c?'active':'')+'">'+esc(specs[c].title)+'</button>').join('');document.querySelectorAll('#settings-tabs button').forEach(b=>b.onclick=()=>{active=b.dataset.c;draw()});let rows=all(active);document.querySelector('#settings-body').innerHTML='<div class="toolbar"><span>'+rows.length+' records</span><button class="primary" id="settings-add">+ Add</button></div>'+table(active,active==='staff'?['name','username','role']:['name',...(active==='technicians'?['surname','branch_id']:active==='sectors'?['highsite_id','azimuth']:['address'])],rows);document.querySelector('#settings-add').onclick=()=>form(active);document.querySelectorAll('#settings-body tr[data-id]').forEach(tr=>tr.onclick=()=>{if(active==='staff'){alert('Staff password changes are not supported in this release.');return}form(active,rows.find(x=>x.id===tr.dataset.id))})}draw()}
 function dateKey(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
-function planner(){let el=document.querySelector('#content');let m=state.month;let monthTitle=m.toLocaleDateString(undefined,{month:'long',year:'numeric'});el.insertAdjacentHTML('beforeend','<div class="toolbar"><h2>Technician planner — '+esc(monthTitle)+'</h2><div class="tools"><select id="branch-filter"><option value="">All branches</option>'+all('branches').map(x=>'<option value="'+esc(x.id)+'" '+(state.branch===x.id?'selected':'')+'>'+esc(x.name)+'</option>').join('')+'</select><button id="prev">Previous</button><button id="next">Next</button></div></div><p class="muted">Drag tickets to a day, then choose a technician from that branch. No times are required.</p><div id="unscheduled" class="card" style="margin-bottom:15px"></div><div class="calendar" id="calendar"></div>');document.querySelector('#branch-filter').onchange=e=>{state.branch=e.target.value;render()};document.querySelector('#prev').onclick=()=>{state.month=new Date(m.getFullYear(),m.getMonth()-1,1);render()};document.querySelector('#next').onclick=()=>{state.month=new Date(m.getFullYear(),m.getMonth()+1,1);render()};let visible=all('tickets').filter(x=>!state.branch||x.branch_id===state.branch);let unscheduled=visible.filter(x=>!x.scheduled_date);document.querySelector('#unscheduled').innerHTML='<b>Unscheduled tickets ('+unscheduled.length+')</b><div class="grid" style="margin-top:12px">'+unscheduled.map(ticketCard).join('')+'</div>';let first=new Date(m.getFullYear(),m.getMonth(),1),offset=(first.getDay()+6)%7,days=new Date(m.getFullYear(),m.getMonth()+1,0).getDate();let cal=document.querySelector('#calendar');for(let i=0;i<offset;i++)cal.insertAdjacentHTML('beforeend','<div></div>');for(let n=1;n<=days;n++){let date=new Date(m.getFullYear(),m.getMonth(),n),key=dateKey(date),items=visible.filter(x=>x.scheduled_date===key);let day=document.createElement('div');day.className='day'+(key===dateKey(new Date())?' today':'');day.dataset.day=key;day.innerHTML='<div class="dayhead">'+esc(date.toLocaleDateString(undefined,{weekday:'short',day:'numeric'}))+'</div>'+items.map(ticketCard).join('');day.ondragover=e=>{e.preventDefault();day.classList.add('dragover')};day.ondragleave=()=>day.classList.remove('dragover');day.ondrop=e=>{e.preventDefault();day.classList.remove('dragover');schedule(e.dataTransfer.getData('text/plain'),key)};cal.append(day)}document.querySelectorAll('.ticket').forEach(b=>{b.ondragstart=e=>e.dataTransfer.setData('text/plain',b.dataset.ticket);b.onclick=()=>detail('tickets',b.dataset.ticket)})}
-function ticketCard(t){return '<div class="ticket" draggable="true" data-ticket="'+esc(t.id)+'"><b>'+esc(t.number||t.name)+'</b><small>'+esc(t.name)+' · '+esc(lookup('technicians',t.technician_id))+'</small></div>'}
-function schedule(id,date){let t=all('tickets').find(x=>x.id===id);if(!t)return;let candidates=all('technicians').filter(x=>(!t.branch_id||x.branch_id===t.branch_id)&&x.active!=='no');let names=candidates.map((x,i)=>(i+1)+'. '+x.name+' '+(x.surname||'')).join('\n');let selected=prompt('Assign technician (enter number):\n'+names,candidates.findIndex(x=>x.id===t.technician_id)+1||1);if(selected===null)return;let tech=candidates[Number(selected)-1];if(!tech){toast('Invalid technician selection');return}call({category:'tickets'},'PUT',{...t,technician_id:tech.id,scheduled_date:date}).then(refresh).catch(e=>toast(e.message))}
+
+function planner(){
+ const el=document.querySelector('#content'),m=state.month,title=m.toLocaleDateString(undefined,{month:'long',year:'numeric'});
+ const filt=x=>!state.branch||x.branch_id===state.branch;
+ const tickets=all('tickets').filter(filt).map(x=>({kind:'tickets',record:x}));
+ const orders=all('workorders').filter(filt).map(x=>({kind:'workorders',record:x}));
+ const tasks=[...tickets,...orders];
+ const techs=all('technicians').filter(filt);
+ const unscheduled=tasks.filter(x=>!x.record.scheduled_date);
+ const workload=techs.map(t=>({name:t.name+' '+(t.surname||''),count:tasks.filter(x=>x.record.technician_id===t.id&&x.record.scheduled_date?.startsWith(m.getFullYear()+'-'+String(m.getMonth()+1).padStart(2,'0'))).length}));
+ el.insertAdjacentHTML('beforeend','<div class="nf-kicker">Field service</div><div class="toolbar"><div><h2>Technician scheduling · '+esc(title)+'</h2><p class="nf-detail-subtitle">Drag tickets or work orders to a day and assign a branch technician. Scheduling does not send notifications automatically.</p></div><div class="tools"><select id="branch-filter"><option value="">All branches</option>'+all('branches').map(x=>'<option value="'+esc(x.id)+'" '+(state.branch===x.id?'selected':'')+'>'+esc(x.name)+'</option>').join('')+'</select><button id="prev">← Previous</button><button id="next">Next →</button></div></div><div class="grid" style="margin-bottom:15px"><div class="card"><b>Unscheduled queue</b><div class="metric">'+unscheduled.length+'</div></div><div class="card"><b>Tickets</b><div class="metric">'+tickets.length+'</div></div><div class="card"><b>Work orders</b><div class="metric">'+orders.length+'</div></div><div class="card"><b>Technicians</b><div class="metric">'+techs.length+'</div></div></div><div id="unscheduled" class="card" style="margin-bottom:15px"></div><div class="calendar" id="calendar"></div><div class="card section"><h3>Monthly technician workload</h3><div id="tech-workload"></div></div>');
+ document.querySelector('#branch-filter').onchange=e=>{state.branch=e.target.value;render()};
+ document.querySelector('#prev').onclick=()=>{state.month=new Date(m.getFullYear(),m.getMonth()-1,1);render()};
+ document.querySelector('#next').onclick=()=>{state.month=new Date(m.getFullYear(),m.getMonth()+1,1);render()};
+ document.querySelector('#unscheduled').innerHTML='<div class="toolbar"><b>Unscheduled work ('+unscheduled.length+')</b><div class="tools"><button id="quick-ticket">+ Ticket</button><button id="quick-workorder">+ Work order</button></div></div><div class="grid">'+unscheduled.map(taskCard).join('')+'</div>';
+ document.querySelector('#quick-ticket').onclick=()=>form('tickets',null,{type:'customer',status:'open',priority:'normal'});
+ document.querySelector('#quick-workorder').onclick=()=>form('workorders',null,{status:'open',branch_id:state.branch});
+ const first=new Date(m.getFullYear(),m.getMonth(),1),offset=(first.getDay()+6)%7,days=new Date(m.getFullYear(),m.getMonth()+1,0).getDate(),cal=document.querySelector('#calendar');
+ for(let i=0;i<offset;i++)cal.insertAdjacentHTML('beforeend','<div aria-hidden="true"></div>');
+ for(let n=1;n<=days;n++){
+  let date=new Date(m.getFullYear(),m.getMonth(),n),key=dateKey(date),items=tasks.filter(x=>x.record.scheduled_date===key);
+  const day=document.createElement('div');day.className='day'+(key===dateKey(new Date())?' today':'');day.dataset.day=key;
+  day.innerHTML='<div class="dayhead">'+esc(date.toLocaleDateString(undefined,{weekday:'short',day:'numeric'}))+' <span style="float:right">'+items.length+'</span></div>'+items.map(taskCard).join('');
+  day.ondragover=e=>{e.preventDefault();day.classList.add('dragover')};
+  day.ondragleave=()=>day.classList.remove('dragover');
+  day.ondrop=e=>{e.preventDefault();day.classList.remove('dragover');schedule(e.dataTransfer.getData('text/plain'),key)};
+  cal.append(day);
+ }
+ document.querySelector('#tech-workload').innerHTML=workload.length?workload.map(x=>'<div class="nf-statline"><span>'+esc(x.name)+'</span><b>'+x.count+' assigned</b></div>').join(''):'<p class="nf-empty">Add technicians in Administration to manage assignments.</p>';
+ document.querySelectorAll('.ticket[data-task]').forEach(b=>{
+  b.ondragstart=e=>e.dataTransfer.setData('text/plain',b.dataset.task);
+  b.onclick=()=>{let [kind,id]=b.dataset.task.split(':');detail(kind,id)};
+ });
+}
+function taskCard(task){
+ const t=task.record,label=task.kind==='tickets'?'Ticket':'Work order';
+ return '<div class="ticket" draggable="true" data-task="'+task.kind+':'+esc(t.id)+'"><small>'+label+'</small><b>'+esc(t.number||t.name)+'</b><small>'+esc(lookup('technicians',t.technician_id))+'</small></div>';
+}
+function schedule(spec,date){
+ const match=/^(tickets|workorders):([a-f0-9]{32})$/.exec(spec);if(!match)return;
+ const [,kind,id]=match,record=all(kind).find(x=>x.id===id);if(!record)return;
+ const candidates=all('technicians').filter(x=>(!record.branch_id||x.branch_id===record.branch_id)&&x.active!=='no');
+ if(!candidates.length){toast('No active technicians are assigned to this branch.');return}
+ const choices=candidates.map((x,i)=>(i+1)+'. '+x.name+' '+(x.surname||'')).join('\n');
+ const selection=prompt('Assign technician to '+date+' (number):\n'+choices,String(Math.max(1,candidates.findIndex(x=>x.id===record.technician_id)+1)));
+ if(selection===null)return;
+ const selected=candidates[Number(selection)-1];if(!selected){toast('Invalid technician selection');return}
+ call({category:kind},'PUT',{...record,technician_id:selected.id,scheduled_date:date}).then(refresh).catch(e=>toast(e.message));
+}
 function dashboard(){
 const today=dateKey(new Date()),tickets=all('tickets'),customers=all('customers'),sectors=all('sectors'),outages=all('outages');
 const open=tickets.filter(x=>!['closed','resolved'].includes(x.status));
