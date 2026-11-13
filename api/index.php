@@ -71,7 +71,7 @@ try {
     }
     if (empty($_SESSION['user'])) respond(['error'=>'Authentication required'],401);
     if ($method==='POST' && $action==='logout') { csrf(); $_SESSION=[]; session_destroy(); respond(['ok'=>true]); }
-    $allowed=['customers','highsites','sectors','equipment','backhauls','scripts','jobs','tickets','branches','technicians','packages','staff'];
+    $allowed=['customers','highsites','sectors','equipment','backhauls','scripts','jobs','tickets','branches','technicians','packages','staff','outages','maintenance','inventory','leads','changes','ipam'];
     $category=(string)($_GET['category']??'');
     if (!in_array($category,$allowed,true)) respond(['error'=>'Unknown category'],404);
     if ($category==='staff' && ($_SESSION['role']??'')!=='admin') respond(['error'=>'Admin only'],403);
@@ -84,23 +84,29 @@ try {
         $name=trim((string)($b['name']??$b['title']??$b['account']??''));
         if ($name==='' || strlen($name)>160) respond(['error'=>'Name/account/title required (max 160 bytes)'],422);
         $fields=[
-          'customers'=>['account','name','surname','address','phone','email','package','branch_id','highsite_id','sector_id','latitude','longitude','cpe_ip','cpe_username','notes'],
-          'tickets'=>['name','number','type','status','priority','customer_id','highsite_id','branch_id','technician_id','scheduled_date','description','call_log'],
-          'highsites'=>['name','number','address','branch_id','latitude','longitude','notes'],
-          'equipment'=>['name','type','category','highsite_id','customer_id','ownership','serial_number','ip','username','protocol','port','notes'],
-          'branches'=>['name','address','phone'],
-          'technicians'=>['name','surname','branch_id','phone','active'],
-          'scripts'=>['name','language','description','body','risk'],
+          'customers'=>['account','name','surname','address','phone','email','package','branch_id','highsite_id','sector_id','latitude','longitude','cpe_ip','cpe_username','notes','account_status','service_type','installation_date','contract_end','billing_day','monthly_fee','vlan','pppoe_username','static_ip','cpe_mac','signal_dbm','last_contact','lead_source','emergency_contact'],
+          'tickets'=>['name','number','type','status','priority','customer_id','highsite_id','branch_id','technician_id','scheduled_date','description','call_log','source','impact','fault_category','opened_date','due_date','resolved_date','sla_hours','resolution','repeat_fault','contact_name','contact_phone'],
+          'highsites'=>['name','number','address','branch_id','latitude','longitude','notes','site_status','tower_height','site_owner','lease_expiry','site_contact','access_instructions','site_code','power_source','battery_capacity','ups_runtime','generator','last_inspection','next_inspection'],
+          'equipment'=>['name','type','category','highsite_id','customer_id','ownership','serial_number','ip','username','protocol','port','notes','mac','firmware','purchase_date','warranty_expiry','supplier','purchase_price','asset_tag','installation_date','last_service','next_service','condition','poe_type','vlan'],
+          'branches'=>['name','address','phone','manager','email','region'],
+          'technicians'=>['name','surname','branch_id','phone','active','skills','employee_number','email','on_call'],
+          'scripts'=>['name','language','description','body','risk','vendor','version','approved','target_scope'],
           'staff'=>['name','username','role'],
-          'sectors'=>['name','highsite_id','azimuth','frequency','type','ip','username','protocol','port','notes'],
-          'backhauls'=>['name','highsite_id','remote_highsite_id','frequency','notes'],
-          'packages'=>['name','speed','price'],
+          'sectors'=>['name','highsite_id','azimuth','frequency','type','ip','username','protocol','port','notes','ssid','channel_width','polarization','antenna_gain','tx_power','max_clients','sector_status','radio_mac','tower_height','beamwidth'],
+          'backhauls'=>['name','highsite_id','remote_highsite_id','frequency','notes','remote_ip','link_distance','target_rssi','channel_width','link_capacity','link_status'],
+          'packages'=>['name','speed','price','upload_speed','download_speed','contention','data_policy'],
+          'outages'=>['name','number','status','severity','branch_id','highsite_id','start_date','end_date','affected_customers','root_cause','resolution'],
+          'maintenance'=>['name','highsite_id','equipment_id','branch_id','technician_id','due_date','completed_date','status','checklist'],
+          'inventory'=>['name','sku','category','branch_id','quantity','minimum','unit_cost','supplier','location','serial_tracking'],
+          'leads'=>['name','phone','email','address','branch_id','stage','requested_package','follow_up','notes'],
+          'changes'=>['name','change_type','risk','status','highsite_id','technician_id','planned_date','rollback_plan','description'],
+          'ipam'=>['name','address','vlan','branch_id','highsite_id','customer_id','purpose','status','notes'],
         ];
         $item=[];
         foreach(($fields[$category]??['name','description']) as $field){
           $value=$b[$field]??'';
           if(!is_scalar($value)) respond(['error'=>'Invalid field '.$field],422);
-          $item[$field]=substr(trim((string)$value),0,in_array($field,['description','notes','call_log'],true)?4000:($field==='body'?16000:300));
+          $item[$field]=substr(trim((string)$value),0,in_array($field,['description','notes','call_log','resolution','root_cause','rollback_plan','access_instructions','checklist'],true)?4000:($field==='body'?16000:300));
         }
         if($category==='tickets'&&!in_array($item['type'],['customer','highsite','voip','other'],true))respond(['error'=>'Invalid ticket type'],422);
         if($category==='equipment'&&!in_array($item['category'],['distribution','backhaul','access','power','cpe','router','other'],true))respond(['error'=>'Invalid equipment category'],422);
