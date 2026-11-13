@@ -92,7 +92,7 @@ try {
           'technicians'=>['name','surname','branch_id','phone','active'],
           'scripts'=>['name','language','description','body','risk'],
           'staff'=>['name','username','role'],
-          'sectors'=>['name','highsite_id','azimuth','frequency','notes'],
+          'sectors'=>['name','highsite_id','azimuth','frequency','type','ip','username','protocol','port','notes'],
           'backhauls'=>['name','highsite_id','remote_highsite_id','frequency','notes'],
           'packages'=>['name','speed','price'],
         ];
