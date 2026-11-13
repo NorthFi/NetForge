@@ -100,7 +100,7 @@ try {
         if ($name==='' || strlen($name)>160) respond(['error'=>'Name/account/title required (max 160 bytes)'],422);
         $fields=[
           'customers'=>['account','name','surname','address','phone','email','package','branch_id','highsite_id','sector_id','latitude','longitude','cpe_ip','cpe_username','notes','account_status','service_type','installation_date','contract_end','billing_day','monthly_fee','vlan','pppoe_username','static_ip','cpe_mac','signal_dbm','last_contact','lead_source','emergency_contact'],
-          'tickets'=>['name','number','type','status','priority','customer_id','highsite_id','branch_id','technician_id','scheduled_date','description','call_log','source','impact','fault_category','opened_date','due_date','resolved_date','sla_hours','resolution','repeat_fault','contact_name','contact_phone'],
+          'tickets'=>['name','number','type','status','priority','customer_id','highsite_id','branch_id','technician_id','scheduled_date','description','call_log','outage_id','source','impact','fault_category','opened_date','due_date','resolved_date','sla_hours','resolution','repeat_fault','contact_name','contact_phone'],
           'highsites'=>['name','number','address','branch_id','latitude','longitude','notes','site_status','tower_height','site_owner','lease_expiry','site_contact','access_instructions','site_code','power_source','battery_capacity','ups_runtime','generator','last_inspection','next_inspection'],
           'equipment'=>['name','type','category','highsite_id','customer_id','ownership','serial_number','ip','username','protocol','port','notes','mac','firmware','purchase_date','warranty_expiry','supplier','purchase_price','asset_tag','installation_date','last_service','next_service','condition','poe_type','vlan'],
           'branches'=>['name','address','phone','manager','email','region'],
@@ -133,6 +133,7 @@ try {
         if($category==='tickets'&&!in_array($item['type'],['customer','highsite','voip','other'],true))respond(['error'=>'Invalid ticket type'],422);
         if($category==='equipment'&&!in_array($item['category'],['distribution','backhaul','access','power','cpe','router','other'],true))respond(['error'=>'Invalid equipment category'],422);
         if($category==='customers'){
+          if(trim((string)($item['account']??''))==='')respond(['error'=>'An account identifier is required'],422);
           $hs=$item['highsite_id']??'';$sector=$item['sector_id']??'';
           if($sector!==''&&$hs==='')respond(['error'=>'Select a highsite before choosing a sector'],422);
           if($hs!==''){$sites=locked('highsites',fn($r)=>$r);if(!array_filter($sites,fn($r)=>($r['id']??'')===$hs))respond(['error'=>'Highsite does not exist'],422);}
@@ -180,6 +181,37 @@ try {
           if($duplicate)respond(['error'=>'Duplicate IP/CIDR record. Review the existing allocation first.'],409);
         }
 
+
+        if($category==='payments'&&($item['invoice_id']??'')!==''){
+          $matching=locked('invoices',fn($r)=>array_values(array_filter($r,fn($i)=>($i['id']??'')===$item['invoice_id'])));
+          if(count($matching)!==1)respond(['error'=>'Referenced invoice does not exist'],422);
+          if(($matching[0]['customer_id']??'')!==($item['customer_id']??''))
+            respond(['error'=>'Payment customer must match the referenced invoice customer'],422);
+        }
+        if($category==='activities'&&($item['customer_id']??'')==='')respond(['error'=>'Communication event requires a customer'],422);
+        if($category==='inventory'){
+          foreach(['quantity','minimum'] as $countField){
+            if(($item[$countField]??'')!==''&&(!ctype_digit((string)$item[$countField])||strlen($item[$countField])>9))
+              respond(['error'=>"$countField must be a nonnegative whole number"],422);
+          }
+          if(($item['unit_cost']??'')!==''&&(!is_numeric($item['unit_cost'])||(float)$item['unit_cost']<0))
+            respond(['error'=>'Unit cost must be nonnegative'],422);
+        }
+        if($category==='ipam'){
+          $addr=$item['address'];$parts=explode('/',$addr);
+          if(count($parts)>2||filter_var($parts[0],FILTER_VALIDATE_IP)===false)
+            respond(['error'=>'Enter a valid IPv4/IPv6 address or CIDR'],422);
+          if(count($parts)===2){
+            $max=filter_var($parts[0],FILTER_VALIDATE_IP,FILTER_FLAG_IPV4)?32:128;
+            if($parts[1]===''||!ctype_digit($parts[1])||(int)$parts[1]>$max)
+              respond(['error'=>'Invalid IP prefix length'],422);
+          }
+        }
+        if($category==='sectors'&&($item['azimuth']??'')!==''){
+          $az=$item['azimuth'];
+          if(!is_numeric($az)||!is_finite((float)$az)||(float)$az<0||(float)$az>=360)
+            respond(['error'=>'Azimuth must be in the range 0 to less than 360 degrees'],422);
+        }
         if($category==='staff'){
           if(($_SESSION['role']??'')!=='admin')respond(['error'=>'Admin only'],403);
           if($method==='PUT')respond(['error'=>'Staff updates not yet supported'],405);
@@ -217,16 +249,17 @@ try {
         $id=(string)($_GET['id']??'');if (!preg_match('/^[a-f0-9]{32}$/',$id)) respond(['error'=>'Invalid ID'],422);
         if ($category==='jobs') respond(['error'=>'Job execution is disabled'],403);
         // Prevent destructive deletions that would orphan related records.
+        // Destructive operation guards across all typed relationships.
         $references=[
-          'highsites'=>[['sectors','highsite_id'],['customers','highsite_id'],['equipment','highsite_id'],['backhauls','highsite_id'],['backhauls','remote_highsite_id'],['tickets','highsite_id'],['services','highsite_id'],['surveys','highsite_id'],['workorders','highsite_id']],
-          'sectors'=>[['customers','sector_id']],
-          'customers'=>[['tickets','customer_id'],['equipment','customer_id']],
-          'branches'=>[['customers','branch_id'],['highsites','branch_id'],['technicians','branch_id'],['tickets','branch_id'],['surveys','branch_id'],['invoices','branch_id'],['workorders','branch_id']],
-          'technicians'=>[['tickets','technician_id'],['workorders','technician_id'],['maintenance','technician_id']],
-          'customers'=>[['tickets','customer_id'],['equipment','customer_id'],['activities','customer_id'],['services','customer_id'],['invoices','customer_id'],['payments','customer_id'],['surveys','customer_id'],['workorders','customer_id'],['link_checks','customer_id']],
+          'highsites'=>[['sectors','highsite_id'],['customers','highsite_id'],['equipment','highsite_id'],['backhauls','highsite_id'],['backhauls','remote_highsite_id'],['tickets','highsite_id'],['services','highsite_id'],['surveys','highsite_id'],['workorders','highsite_id'],['outages','highsite_id'],['maintenance','highsite_id'],['changes','highsite_id'],['ipam','highsite_id']],
           'sectors'=>[['customers','sector_id'],['services','sector_id'],['link_checks','sector_id']],
+          'customers'=>[['tickets','customer_id'],['equipment','customer_id'],['activities','customer_id'],['services','customer_id'],['invoices','customer_id'],['payments','customer_id'],['surveys','customer_id'],['workorders','customer_id'],['link_checks','customer_id'],['ipam','customer_id']],
+          'branches'=>[['customers','branch_id'],['highsites','branch_id'],['technicians','branch_id'],['tickets','branch_id'],['surveys','branch_id'],['invoices','branch_id'],['workorders','branch_id'],['inventory','branch_id'],['leads','branch_id'],['ipam','branch_id'],['outages','branch_id'],['changes','branch_id'],['maintenance','branch_id']],
+          'technicians'=>[['tickets','technician_id'],['workorders','technician_id'],['maintenance','technician_id'],['changes','technician_id']],
+          'equipment'=>[['maintenance','equipment_id']],
           'invoices'=>[['payments','invoice_id']],
           'tickets'=>[['activities','ticket_id'],['workorders','ticket_id']],
+          'leads'=>[['surveys','lead_id']],
         ];
         foreach(($references[$category]??[]) as [$collection,$field]){
           $used=locked($collection,fn($rows)=>count(array_filter($rows,fn($row)=>($row[$field]??'')===$id)));
