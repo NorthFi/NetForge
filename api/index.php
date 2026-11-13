@@ -48,7 +48,7 @@ try {
     $action=$_GET['action']??'';
     if ($method==='GET' && $action==='status') {
         $installed=is_file(datafile('auth'));
-        respond(['installed'=>$installed,'authenticated'=>!empty($_SESSION['user']),'username'=>$_SESSION['username']??null,'csrf'=>$_SESSION['csrf']??null]);
+        respond(['installed'=>$installed,'authenticated'=>!empty($_SESSION['user']),'username'=>$_SESSION['username']??null,'role'=>$_SESSION['role']??null,'csrf'=>$_SESSION['csrf']??null]);
     }
     if ($method==='POST' && $action==='setup') {
         if (is_file(datafile('auth'))) respond(['error'=>'Already configured'],409);
@@ -71,7 +71,7 @@ try {
     }
     if (empty($_SESSION['user'])) respond(['error'=>'Authentication required'],401);
     if ($method==='POST' && $action==='logout') { csrf(); $_SESSION=[]; session_destroy(); respond(['ok'=>true]); }
-    $allowed=['customers','highsites','sectors','equipment','backhauls','scripts','jobs','tickets','branches','technicians','packages','staff','outages','maintenance','inventory','leads','changes','ipam'];
+    $allowed=['customers','highsites','sectors','equipment','backhauls','scripts','jobs','tickets','branches','technicians','packages','staff','outages','maintenance','inventory','leads','changes','ipam','activities','services','invoices','payments','surveys','workorders','link_checks'];
     $category=(string)($_GET['category']??'');
     if (!in_array($category,$allowed,true)) respond(['error'=>'Unknown category'],404);
     if ($category==='staff' && ($_SESSION['role']??'')!=='admin') respond(['error'=>'Admin only'],403);
@@ -101,6 +101,13 @@ try {
           'leads'=>['name','phone','email','address','branch_id','stage','requested_package','follow_up','notes'],
           'changes'=>['name','change_type','risk','status','highsite_id','technician_id','planned_date','rollback_plan','description'],
           'ipam'=>['name','address','vlan','branch_id','highsite_id','customer_id','purpose','status','notes'],
+          'activities'=>['name','customer_id','ticket_id','type','channel','description','occurred_at','performed_by'],
+          'services'=>['name','customer_id','service_type','status','package','highsite_id','sector_id','vlan','ip','pppoe_username','activated_date','notes'],
+          'invoices'=>['name','number','customer_id','branch_id','invoice_date','due_date','amount','status','description'],
+          'payments'=>['name','reference','customer_id','invoice_id','payment_date','amount','method','notes'],
+          'surveys'=>['name','customer_id','lead_id','branch_id','highsite_id','latitude','longitude','azimuth','distance_km','fresnel_clearance','los_status','status','notes'],
+          'workorders'=>['name','ticket_id','customer_id','highsite_id','technician_id','branch_id','scheduled_date','status','checklist','materials','completion_notes'],
+          'link_checks'=>['name','customer_id','sector_id','rssi_dbm','snr_db','ccq','tx_mbps','rx_mbps','captured_at','notes'],
         ];
         $item=[];
         foreach(($fields[$category]??['name','description']) as $field){
@@ -124,6 +131,40 @@ try {
           if($customer!==''){$customers=locked('customers',fn($r)=>$r);if(!array_filter($customers,fn($r)=>($r['id']??'')===$customer))respond(['error'=>'Customer does not exist'],422);}
           if($hs!==''){$sites=locked('highsites',fn($r)=>$r);if(!array_filter($sites,fn($r)=>($r['id']??'')===$hs))respond(['error'=>'Highsite does not exist'],422);}
         }
+
+        // Non-executable operational records must use valid finite values; never infer telemetry.
+        if(in_array($category,['payments','invoices'],true)){
+          if(!is_numeric($item['amount']??null) || (float)$item['amount']<0 || !is_finite((float)$item['amount']))
+            respond(['error'=>'Amount must be a finite nonnegative number'],422);
+          $item['amount']=number_format((float)$item['amount'],2,'.','');
+        }
+        if($category==='activities') {
+          $item['performed_by']=$_SESSION['username'];
+          if(!in_array($item['type'],['call','note','email','site-visit','whatsapp'],true))
+             respond(['error'=>'Invalid activity type'],422);
+          if($item['occurred_at']==='')$item['occurred_at']=gmdate('c');
+        }
+        if($category==='services'){
+          if($item['customer_id']==='') respond(['error'=>'Service requires a customer'],422);
+          if($item['sector_id']!==''&&$item['highsite_id']==='')respond(['error'=>'Select highsite before sector'],422);
+          if($item['sector_id']!==''){
+             $sectors=locked('sectors',fn($r)=>$r);
+             if(!array_filter($sectors,fn($r)=>($r['id']??'')===$item['sector_id']&&($r['highsite_id']??'')===$item['highsite_id']))
+                respond(['error'=>'Serving sector does not belong to selected highsite'],422);
+          }
+        }
+        if($category==='link_checks'){
+          if($item['customer_id']===''&&$item['sector_id']==='')respond(['error'=>'Choose a customer or a sector'],422);
+          if($item['captured_at']==='')$item['captured_at']=gmdate('c');
+        }
+        if($category==='ipam'){
+          $addr=trim($item['address']??'');
+          if($addr==='')respond(['error'=>'IP or CIDR is required'],422);
+          $existing=locked('ipam',fn($r)=>$r);
+          $duplicate=array_filter($existing,fn($r)=>strcasecmp((string)($r['address']??''),$addr)===0&&($r['id']??'')!==($b['id']??''));
+          if($duplicate)respond(['error'=>'Duplicate IP/CIDR record. Review the existing allocation first.'],409);
+        }
+
         if($category==='staff'){
           if(($_SESSION['role']??'')!=='admin')respond(['error'=>'Admin only'],403);
           if($method==='PUT')respond(['error'=>'Staff updates not yet supported'],405);
@@ -150,11 +191,15 @@ try {
         if ($category==='jobs') respond(['error'=>'Job execution is disabled'],403);
         // Prevent destructive deletions that would orphan related records.
         $references=[
-          'highsites'=>[['sectors','highsite_id'],['customers','highsite_id'],['equipment','highsite_id'],['backhauls','highsite_id'],['backhauls','remote_highsite_id'],['tickets','highsite_id']],
+          'highsites'=>[['sectors','highsite_id'],['customers','highsite_id'],['equipment','highsite_id'],['backhauls','highsite_id'],['backhauls','remote_highsite_id'],['tickets','highsite_id'],['services','highsite_id'],['surveys','highsite_id'],['workorders','highsite_id']],
           'sectors'=>[['customers','sector_id']],
           'customers'=>[['tickets','customer_id'],['equipment','customer_id']],
-          'branches'=>[['customers','branch_id'],['highsites','branch_id'],['technicians','branch_id'],['tickets','branch_id']],
-          'technicians'=>[['tickets','technician_id']],
+          'branches'=>[['customers','branch_id'],['highsites','branch_id'],['technicians','branch_id'],['tickets','branch_id'],['surveys','branch_id'],['invoices','branch_id'],['workorders','branch_id']],
+          'technicians'=>[['tickets','technician_id'],['workorders','technician_id'],['maintenance','technician_id']],
+          'customers'=>[['tickets','customer_id'],['equipment','customer_id'],['activities','customer_id'],['services','customer_id'],['invoices','customer_id'],['payments','customer_id'],['surveys','customer_id'],['workorders','customer_id'],['link_checks','customer_id']],
+          'sectors'=>[['customers','sector_id'],['services','sector_id'],['link_checks','sector_id']],
+          'invoices'=>[['payments','invoice_id']],
+          'tickets'=>[['activities','ticket_id'],['workorders','ticket_id']],
         ];
         foreach(($references[$category]??[]) as [$collection,$field]){
           $used=locked($collection,fn($rows)=>count(array_filter($rows,fn($row)=>($row[$field]??'')===$id)));
