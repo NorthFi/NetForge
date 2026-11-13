@@ -190,5 +190,168 @@ document.querySelector('#dash-alerts').innerHTML=alerts.length?alerts.map(x=>'<d
 }
 function exportCollection(c){let rows=all(c),keys=['id',...specs[c].fields.map(x=>x[0]).filter(x=>x!=='password')];let q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';let data=[keys.map(q).join(','),...rows.map(r=>keys.map(k=>q(r[k])).join(','))].join('\r\n');let u=URL.createObjectURL(new Blob([data],{type:'text/csv;charset=utf-8'}));let a=document.createElement('a');a.href=u;a.download='netforge-'+c+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}
 function operations(){let c='outages';let el=document.querySelector('#content');el.insertAdjacentHTML('beforeend','<h2>Network operations</h2><div class="tabs" id="ops-tabs"></div><div id="ops-body"></div>');function draw(){document.querySelector('#ops-tabs').innerHTML=['outages','maintenance','inventory','leads','changes','ipam'].map(x=>'<button data-c="'+x+'" class="'+(x===c?'active':'')+'">'+esc(specs[x].title)+'</button>').join('');document.querySelectorAll('#ops-tabs button').forEach(b=>b.onclick=()=>{c=b.dataset.c;draw()});let rows=all(c);document.querySelector('#ops-body').innerHTML='<div class="toolbar"><span>'+rows.length+' records</span><button class="primary" id="ops-add">+ Add</button></div>'+table(c,specs[c].fields.slice(0,6).map(f=>f[0]),rows);document.querySelector('#ops-add').onclick=()=>form(c);document.querySelector('#ops-export').onclick=()=>exportCollection(c);document.querySelectorAll('#ops-body tr[data-id]').forEach(tr=>tr.onclick=()=>form(c,rows.find(x=>x.id===tr.dataset.id)))}draw()}
+
+function workspaceTable(target,c,keys,filter){
+ const rows=all(c).filter(filter||(()=>true));
+ target.innerHTML='<div class="toolbar"><div><b>'+esc(specs[c].title)+'</b><div class="nf-detail-subtitle">'+rows.length+' records</div></div><div class="tools"><button id="workspace-export">Export CSV</button>'+(state.role!=='viewer'?'<button class="primary" id="workspace-add">+ New</button>':'')+'</div></div>'+table(c,keys,rows);
+ target.querySelector('#workspace-export').onclick=()=>exportCollection(c);
+ const b=target.querySelector('#workspace-add');if(b)b.onclick=()=>form(c);
+ target.querySelectorAll('tr[data-id]').forEach(tr=>{tr.onclick=()=>detail(c,tr.dataset.id);tr.onkeydown=e=>{if(e.key==='Enter')detail(c,tr.dataset.id)}});
+}
+function finance(){
+ const el=document.querySelector('#content'),invoices=all('invoices'),payments=all('payments');
+ const toNum=x=>Number(x)||0;
+ const total=invoices.reduce((n,i)=>n+toNum(i.amount),0),received=payments.reduce((n,p)=>n+toNum(p.amount),0);
+ const assigned=invoices.reduce((n,i)=>n+Math.min(toNum(i.amount),payments.filter(p=>p.invoice_id===i.id).reduce((x,p)=>x+toNum(p.amount),0)),0);
+ const balance=Math.max(0,total-assigned);
+ const money=n=>new Intl.NumberFormat('en-ZA',{style:'currency',currency:'ZAR'}).format(n);
+ const overdue=invoices.filter(i=>i.due_date&&i.due_date<dateKey(new Date())&&toNum(i.amount)>payments.filter(p=>p.invoice_id===i.id).reduce((x,p)=>x+toNum(p.amount),0)).length;
+ el.insertAdjacentHTML('beforeend','<div class="nf-kicker">Financial administration</div><h2>Finance</h2><p class="muted">Manual invoice and payment register only. This is not an automated billing ledger or tax-compliant invoice engine.</p><div class="grid">'+[['Recorded invoices',money(total)],['Recorded payments',money(received)],['Unallocated invoice balance',money(balance)],['Overdue invoice records',overdue]].map(([k,v])=>'<div class="card nf-metric"><small>'+esc(k)+'</small><div class="metric" style="font-size:25px">'+esc(v)+'</div></div>').join('')+'</div><div class="tabs" id="finance-tabs"></div><div id="finance-body" class="section"></div>');
+ let active='invoices',spec={invoices:['number','name','customer_id','due_date','amount','status'],payments:['reference','name','customer_id','invoice_id','amount','payment_date'],services:['name','customer_id','service_type','package','status','highsite_id','sector_id'],packages:['name','speed','price','download_speed','upload_speed']};
+ function draw(){
+  document.querySelector('#finance-tabs').innerHTML=Object.keys(spec).map(x=>'<button data-fin="'+x+'" class="'+(x===active?'active':'')+'">'+esc(specs[x].title)+'</button>').join('');
+  document.querySelectorAll('#finance-tabs button').forEach(b=>b.onclick=()=>{active=b.dataset.fin;draw()});
+  workspaceTable(document.querySelector('#finance-body'),active,spec[active]);
+ }
+ draw();
+}
+function wisp(){
+ const el=document.querySelector('#content'),sites=all('highsites'),sectors=all('sectors'),customers=all('customers'),links=all('backhauls'),outages=all('outages');
+ const active=customers.filter(x=>x.account_status!=='cancelled'),rfs=all('link_checks');
+ const weak=active.filter(x=>x.signal_dbm!==''&&x.signal_dbm!=null&&Number.isFinite(Number(x.signal_dbm))&&Number(x.signal_dbm)<-75);
+ const over=sectors.filter(x=>Number(x.max_clients)>0&&active.filter(c=>c.sector_id===x.id).length>Number(x.max_clients));
+ const offline=sites.filter(x=>x.site_status==='offline');
+ const alerts=[];
+ for(const x of over){let n=active.filter(c=>c.sector_id===x.id).length;alerts.push({label:x.name+' over planned client capacity',sub:n+' clients / '+x.max_clients+' configured limit',view:'sectors'})}
+ for(const x of offline)alerts.push({label:x.name+' marked offline',sub:'Based on manually recorded site status',view:'highsites'});
+ for(const x of weak.slice(0,12))alerts.push({label:(x.account||x.name)+' weak recorded signal',sub:x.signal_dbm+' dBm · manually entered; threshold -75 dBm',view:'customers'});
+ // Exact channel coincidence is a planning indicator, not an RF interference measurement.
+ const rfGroups={};
+ for(const x of sectors){let k=x.highsite_id+'|'+x.frequency+'|'+x.channel_width;if(x.highsite_id&&x.frequency)(rfGroups[k]??=[]).push(x)}
+ for(const group of Object.values(rfGroups))if(group.length>1)alerts.push({label:'Coincident configured frequency: '+group.map(x=>x.name).join(', '),sub:'Same site, frequency and width — review channel reuse',view:'sectors'});
+ el.insertAdjacentHTML('beforeend','<div class="nf-kicker">Wireless engineering</div><div class="nf-pagehead"><div><h2>WISP intelligence</h2><div class="nf-subtitle">Calculated from stored plans and manual observations, not live device telemetry</div></div><button id="survey-quick" class="primary">+ RF site survey</button></div><div class="grid">'+[['Highsites',sites.length],['Access sectors',sectors.length],['Backhaul links',links.length],['Wireless subscribers',active.filter(x=>x.service_type!=='fibre').length],['Sectors over limit',over.length],['Weak recorded links',weak.length],['RF snapshots',rfs.length],['Active site incidents',outages.filter(x=>x.status!=='resolved').length]].map(([k,v])=>'<div class="card nf-metric"><small>'+esc(k)+'</small><div class="metric">'+v+'</div></div>').join('')+'</div><div class="nf-grid-two section"><div class="card"><h3>Sector loading</h3><div id="wisp-sectors"></div></div><div class="card"><h3>Planning and service alerts</h3><div id="wisp-alerts"></div></div></div><div class="card section"><h3>Highsite subscriber impact preview</h3><p class="nf-detail-subtitle">Subscribers assigned directly to each site; use this for outage triage, not live availability claims.</p><div id="wisp-sites"></div></div>');
+ document.querySelector('#survey-quick').onclick=()=>form('surveys',null,{status:'requested',los_status:'unknown'});
+ document.querySelector('#wisp-sectors').innerHTML=sectors.length?sectors.map(x=>{
+   let n=active.filter(c=>c.sector_id===x.id).length,max=Number(x.max_clients)||0,pct=max?Math.min(100,Math.round(100*n/max)):0;
+   return '<div class="nf-statline" style="display:block"><div class="toolbar" style="margin:0"><b>'+esc(x.name)+'</b><small>'+n+(max?' / '+max:' subscribers')+' · '+esc(lookup('highsites',x.highsite_id))+'</small></div>'+(max?'<div class="nf-progress"><span style="width:'+pct+'%;background:'+(pct>=95?'#e15b5b':'#7954d7')+'"></span></div>':'')+'</div>';
+ }).join(''):'<p class="nf-empty">Add highsites and access sectors to start tracking subscriber distribution.</p>';
+ document.querySelector('#wisp-alerts').innerHTML=alerts.length?alerts.slice(0,20).map(a=>'<div class="nf-statline"><div><b>'+esc(a.label)+'</b><div class="nf-detail-subtitle">'+esc(a.sub)+'</div></div><button data-jump="'+esc(a.view)+'">View</button></div>').join(''):'<p class="nf-empty">No configured thresholds or manual status flags currently indicate issues.</p>';
+ document.querySelectorAll('#wisp-alerts [data-jump]').forEach(b=>b.onclick=()=>go(b.dataset.jump));
+ document.querySelector('#wisp-sites').innerHTML=sites.length?sites.map(site=>{
+    let served=active.filter(c=>c.highsite_id===site.id).length,affected=outages.some(o=>o.highsite_id===site.id&&o.status!=='resolved');
+    return '<div class="nf-statline"><div><b>'+esc(site.name)+'</b><div class="nf-detail-subtitle">'+esc(lookup('branches',site.branch_id))+'</div></div><div class="tools"><span class="nf-status '+(affected?'nf-bad':'nf-neutral')+'">'+served+' linked customers'+(affected?' · incident recorded':'')+'</span><button data-site="'+esc(site.id)+'">Open site</button></div></div>';
+ }).join(''):'<p class="nf-empty">No highsites available.</p>';
+ document.querySelectorAll('[data-site]').forEach(b=>b.onclick=()=>site360(b.dataset.site));
+}
+function nfRows(rows,fields,empty='No linked records.'){
+ return rows.length?'<div class="card tablewrap"><table><thead><tr>'+fields.map(([k,l])=>'<th>'+esc(l)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr data-record="'+esc(r.id)+'">'+fields.map(([k])=>'<td>'+esc(resolvedValue(k,r))+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>':'<p class="nf-empty">'+esc(empty)+'</p>';
+}
+function nfProperty(k,v){return '<div class="nf-statline"><span class="muted">'+esc(k)+'</span><span class="nf-stat-value">'+esc(v||'—')+'</span></div>'}
+function customer360(id){
+ let r=all('customers').find(x=>x.id===id);if(!r)return;
+ let d=dialog('<div class="nf-pagehead"><div><div class="nf-kicker">Customer 360°</div><h2>'+esc(r.account||r.name+' '+(r.surname||''))+'</h2><div class="nf-detail-subtitle">'+esc(r.name+' '+r.surname)+' · '+esc(lookup('branches',r.branch_id))+'</div></div><div class="nf-quick-actions"><span class="nf-status nf-neutral">'+esc(r.account_status||'unclassified')+'</span><button id="nf-edit">Edit</button><button id="nf-close">Close</button></div></div><div class="tabs nf-detail-tabs" id="nf-profile-tabs"></div><div id="nf-profile-content"></div>');
+ d.classList.add('nf-customer-modal');
+ d.querySelector('#nf-close').onclick=()=>d.close();
+ d.querySelector('#nf-edit').onclick=()=>{d.close();form('customers',r)};
+ let current='Overview';
+ const related={
+  equipment:all('equipment').filter(x=>x.customer_id===id),
+  tickets:all('tickets').filter(x=>x.customer_id===id),
+  services:all('services').filter(x=>x.customer_id===id),
+  activities:all('activities').filter(x=>x.customer_id===id),
+  link_checks:all('link_checks').filter(x=>x.customer_id===id),
+  invoices:all('invoices').filter(x=>x.customer_id===id),
+  payments:all('payments').filter(x=>x.customer_id===id)
+ };
+ function quick(c,label,defaults={}){return '<button data-new="'+c+'">'+esc(label)+'</button>'}
+ function draw(){
+  const panels=['Overview','Services','Equipment','Tickets','Activity','RF diagnostics','Billing'];
+  d.querySelector('#nf-profile-tabs').innerHTML=panels.map(x=>'<button data-panel="'+x+'" class="'+(x===current?'active':'')+'">'+x+'</button>').join('');
+  d.querySelectorAll('[data-panel]').forEach(b=>b.onclick=()=>{current=b.dataset.panel;draw()});
+  const area=d.querySelector('#nf-profile-content'),site=all('highsites').find(x=>x.id===r.highsite_id),sector=all('sectors').find(x=>x.id===r.sector_id);
+  const activeOutage=all('outages').some(x=>x.highsite_id===r.highsite_id&&x.status!=='resolved');
+  if(current==='Overview'){
+   let coords=r.latitude&&r.longitude&&Number.isFinite(Number(r.latitude))&&Number.isFinite(Number(r.longitude))?'<a rel="noopener noreferrer" target="_blank" href="https://www.openstreetmap.org/?mlat='+encodeURIComponent(r.latitude)+'&mlon='+encodeURIComponent(r.longitude)+'#map=15/'+encodeURIComponent(r.latitude)+'/'+encodeURIComponent(r.longitude)+'">Open location map</a>':'No GPS position saved';
+   area.innerHTML='<div class="nf-quick-actions" style="margin-bottom:14px">'+quick('tickets','New ticket')+quick('activities','Log call')+quick('workorders','Work order')+quick('surveys','RF survey')+'</div><div class="nf-grid-two"><div class="card"><h3>Account information</h3>'+nfProperty('Account',r.account)+nfProperty('Name',r.name+' '+r.surname)+nfProperty('Phone',r.phone)+nfProperty('Email',r.email)+nfProperty('Address',r.address)+nfProperty('Package',r.package)+nfProperty('Service status',r.account_status)+nfProperty('Contact last recorded',r.last_contact)+'</div><div class="card"><h3>WISP service context</h3>'+nfProperty('Serving highsite',site?.name)+nfProperty('Access sector',sector?.name)+nfProperty('Configured frequency',sector?.frequency?sector.frequency+' MHz':'')+nfProperty('Azimuth',sector?.azimuth?sector.azimuth+'°':'')+nfProperty('CPE IP',r.cpe_ip)+nfProperty('PPPoE username',r.pppoe_username)+nfProperty('Recorded RSSI',r.signal_dbm?r.signal_dbm+' dBm':'')+nfProperty('Highsite incident',activeOutage?'Unresolved incident recorded':'No incident recorded')+'<div style="margin-top:13px">'+coords+'</div></div></div><div class="grid section">'+[['Service records',related.services.length],['Equipment items',related.equipment.length],['Tickets',related.tickets.length],['Contact events',related.activities.length],['RF snapshots',related.link_checks.length]].map(([k,n])=>'<div class="card"><small>'+esc(k)+'</small><div class="metric">'+n+'</div></div>').join('')+'</div>';
+  }else if(current==='Equipment'){
+   area.innerHTML='<div class="toolbar"><h3>Customer-owned and ISP-provided equipment</h3>'+quick('equipment','+ Add device')+'</div><div class="tabs" id="nf-equip-tabs"></div><div id="nf-equip-body"></div>';
+   let kind='cpe';
+   const show=()=>{area.querySelector('#nf-equip-tabs').innerHTML=[['cpe','CPE / antennas'],['router','Internal routers'],['other','Other purchases']].map(([k,l])=>'<button data-kind="'+k+'" class="'+(kind===k?'active':'')+'">'+l+'</button>').join('');
+   area.querySelectorAll('[data-kind]').forEach(b=>b.onclick=()=>{kind=b.dataset.kind;show()});
+   const devices=related.equipment.filter(x=>x.category===kind);
+   area.querySelector('#nf-equip-body').innerHTML=devices.length?devices.map(x=>'<div class="card" style="margin-bottom:8px"><div class="nf-statline"><div><b>'+esc(x.name)+'</b><div class="nf-detail-subtitle">'+esc(x.type)+' · '+esc(x.ip||'No IP')+' · '+esc(x.serial_number||'No serial')+'</div><div class="nf-detail-subtitle">'+esc(x.ownership||'Ownership unspecified')+'</div></div><div class="tools"><button data-edit-device="'+esc(x.id)+'">Edit</button><button data-device-access="'+esc(x.id)+'">Connect</button></div></div></div>').join(''):'<p class="nf-empty">No devices recorded for this category.</p>';
+   area.querySelectorAll('[data-edit-device]').forEach(b=>b.onclick=()=>{d.close();form('equipment',related.equipment.find(x=>x.id===b.dataset.editDevice))});
+   area.querySelectorAll('[data-device-access]').forEach(b=>b.onclick=()=>access(related.equipment.find(x=>x.id===b.dataset.deviceAccess)));
+   };
+   show();
+  }else if(current==='Services'){
+    area.innerHTML='<div class="toolbar"><h3>Services and connectivity</h3>'+quick('services','+ Add service')+'</div>'+nfRows(related.services,[['name','Service'],['service_type','Type'],['package','Package'],['status','Status'],['highsite_id','Highsite'],['sector_id','Sector'],['ip','IP']], 'No individual service records. The main customer account still contains legacy package fields.');
+  }else if(current==='Tickets'){
+   area.innerHTML='<div class="toolbar"><h3>Customer tickets</h3>'+quick('tickets','+ New ticket')+'</div>'+nfRows(related.tickets,[['number','Number'],['name','Subject'],['priority','Priority'],['status','Status'],['scheduled_date','Schedule']]);
+  }else if(current==='Activity'){
+   let acts=[...related.activities].sort((a,b)=>String(b.occurred_at).localeCompare(String(a.occurred_at)));
+   area.innerHTML='<div class="toolbar"><h3>Calls and communication history</h3>'+quick('activities','+ Log interaction')+'</div>'+nfRows(acts,[['occurred_at','When'],['type','Type'],['channel','Channel'],['name','Subject'],['performed_by','Staff']]);
+  }else if(current==='RF diagnostics'){
+   let snapshots=[...related.link_checks].sort((a,b)=>String(b.captured_at).localeCompare(String(a.captured_at)));
+   area.innerHTML='<div class="toolbar"><div><h3>Subscriber RF history</h3><small>Manually recorded snapshots; no live SNMP or radio API collection.</small></div>'+quick('link_checks','+ Record RF check')+'</div>'+nfRows(snapshots,[['captured_at','When'],['rssi_dbm','RSSI dBm'],['snr_db','SNR dB'],['ccq','CCQ %'],['tx_mbps','TX Mbps'],['rx_mbps','RX Mbps']]);
+  }else if(current==='Billing'){
+   const total=related.invoices.reduce((n,x)=>n+(Number(x.amount)||0),0),paid=related.payments.reduce((n,x)=>n+(Number(x.amount)||0),0);
+   area.innerHTML='<div class="grid">'+[['Recorded invoices',total],['Recorded payments',paid],['Unreconciled difference',total-paid]].map(([k,v])=>'<div class="card"><small>'+k+'</small><div class="metric" style="font-size:25px">R '+v.toFixed(2)+'</div></div>').join('')+'</div><div class="toolbar section"><h3>Invoice register</h3>'+quick('invoices','+ Invoice')+'</div>'+nfRows(related.invoices,[['number','Number'],['amount','ZAR'],['due_date','Due'],['status','Status']])+'<div class="toolbar section"><h3>Payments</h3>'+quick('payments','+ Payment')+'</div>'+nfRows(related.payments,[['reference','Reference'],['amount','ZAR'],['payment_date','Date']]);
+  }
+  area.querySelectorAll('[data-new]').forEach(b=>b.onclick=()=>{let c=b.dataset.new,defaults={customer_id:id};if(c==='tickets')Object.assign(defaults,{type:'customer',name:'Customer support',status:'open',priority:'normal',branch_id:r.branch_id});if(c==='activities')Object.assign(defaults,{type:'call',channel:'phone',name:'Inbound call'});if(c==='equipment')Object.assign(defaults,{category:'cpe',protocol:'https',ownership:'isp-owned'});if(c==='services')Object.assign(defaults,{highsite_id:r.highsite_id,sector_id:r.sector_id,package:r.package,service_type:r.service_type||'wireless',status:'active'});if(c==='link_checks')Object.assign(defaults,{sector_id:r.sector_id});if(c==='workorders')Object.assign(defaults,{branch_id:r.branch_id});if(c==='surveys')Object.assign(defaults,{highsite_id:r.highsite_id,branch_id:r.branch_id,los_status:'unknown',status:'requested'});d.close();form(c,null,defaults)});
+  area.querySelectorAll('tr[data-record]').forEach(tr=>tr.onclick=()=>{let map={Services:'services',Tickets:'tickets',Activity:'activities','RF diagnostics':'link_checks'},c=map[current]||(current==='Billing'?(related.invoices.some(x=>x.id===tr.dataset.record)?'invoices':'payments'):null);if(!c)return;let row=all(c).find(x=>x.id===tr.dataset.record);if(row){d.close();form(c,row)}});
+ }
+ draw();
+}
+function site360(id){
+ const r=all('highsites').find(x=>x.id===id);if(!r)return;
+ const d=dialog('<div class="nf-pagehead"><div><div class="nf-kicker">Network infrastructure</div><h2>'+esc(r.name)+'</h2><div class="nf-detail-subtitle">'+esc(r.number||'No site number')+' · '+esc(lookup('branches',r.branch_id))+'</div></div><div class="nf-quick-actions"><span class="nf-status nf-neutral">'+esc(r.site_status||'Unclassified')+'</span><button id="nf-edit">Edit site</button><button id="nf-close">Close</button></div></div><div class="tabs nf-detail-tabs" id="nf-site-tabs"></div><div id="nf-site-content"></div>');
+ d.classList.add('nf-site-modal');d.querySelector('#nf-close').onclick=()=>d.close();d.querySelector('#nf-edit').onclick=()=>{d.close();form('highsites',r)};
+ let current='Overview';
+ const sectors=all('sectors').filter(x=>x.highsite_id===id),customers=all('customers').filter(x=>x.highsite_id===id),devices=all('equipment').filter(x=>x.highsite_id===id),links=all('backhauls').filter(x=>x.highsite_id===id||x.remote_highsite_id===id),outages=all('outages').filter(x=>x.highsite_id===id);
+ function draw(){
+  const panels=['Overview','Distribution','Backhaul','Access','Power','Customers','Outages'];
+  d.querySelector('#nf-site-tabs').innerHTML=panels.map(x=>'<button data-panel="'+x+'" class="'+(x===current?'active':'')+'">'+x+'</button>').join('');
+  d.querySelectorAll('[data-panel]').forEach(b=>b.onclick=()=>{current=b.dataset.panel;draw()});
+  let a=d.querySelector('#nf-site-content');
+  if(current==='Overview'){
+   let coords=r.latitude&&r.longitude?'<a target="_blank" rel="noopener noreferrer" href="https://www.openstreetmap.org/?mlat='+encodeURIComponent(r.latitude)+'&mlon='+encodeURIComponent(r.longitude)+'#map=15/'+encodeURIComponent(r.latitude)+'/'+encodeURIComponent(r.longitude)+'">Map location</a>':'No GPS coordinates';
+   a.innerHTML='<div class="grid">'+[['Customers served',customers.length],['Access sectors',sectors.length],['Backhaul links',links.length],['Onsite equipment',devices.length],['Open incidents',outages.filter(x=>x.status!=='resolved').length]].map(([k,v])=>'<div class="card"><small>'+esc(k)+'</small><div class="metric">'+v+'</div></div>').join('')+'</div><div class="nf-grid-two section"><div class="card"><h3>Highsite profile</h3>'+nfProperty('Site number',r.number)+nfProperty('Address',r.address)+nfProperty('Branch',lookup('branches',r.branch_id))+nfProperty('Tower height',r.tower_height?r.tower_height+' m':'')+nfProperty('Owner',r.site_owner)+nfProperty('Lease expiry',r.lease_expiry)+'<div style="margin-top:10px">'+coords+'</div></div><div class="card"><h3>Power and access</h3>'+nfProperty('Power',r.power_source)+nfProperty('Battery capacity',r.battery_capacity?r.battery_capacity+' Ah':'')+nfProperty('UPS runtime',r.ups_runtime?r.ups_runtime+' hours':'')+nfProperty('Generator',r.generator)+nfProperty('Next inspection',r.next_inspection)+nfProperty('Site contact',r.site_contact)+'</div></div>';
+  }else if(current==='Access'){
+   a.innerHTML='<div class="toolbar"><h3>Access sectors</h3><button class="primary" data-add-sector>+ Add sector</button></div>'+nfRows(sectors,[['name','Sector'],['ssid','SSID'],['azimuth','Azimuth'],['frequency','MHz'],['ip','Management IP'],['max_clients','Planned limit']]);
+   a.querySelector('[data-add-sector]').onclick=()=>{d.close();form('sectors',null,{highsite_id:id,sector_status:'active',protocol:'https'})};
+  }else if(current==='Customers'){
+   a.innerHTML='<h3>Served subscribers ('+customers.length+')</h3>'+nfRows(customers,[['account','Account'],['name','First name'],['surname','Surname'],['package','Package'],['sector_id','Sector']]);
+  }else if(current==='Outages'){
+   a.innerHTML='<div class="toolbar"><h3>Site incidents</h3><button class="primary" data-add-outage>+ Log incident</button></div><div class="notice">Potential impact: '+customers.length+' customer accounts explicitly assigned to this highsite.</div>'+nfRows(outages,[['name','Incident'],['status','Status'],['severity','Severity'],['start_date','Opened']]);
+   a.querySelector('[data-add-outage]').onclick=()=>{d.close();form('outages',null,{highsite_id:id,status:'investigating'})};
+  }else{
+   let category=current.toLowerCase(),dev=devices.filter(x=>x.category===category);
+   a.innerHTML='<div class="toolbar"><div><h3>'+current+' equipment</h3><small>'+dev.length+' devices registered</small></div><div class="tools"><button class="primary" data-add-device>+ Add device</button>'+(current==='Backhaul'?'<button data-add-link>+ Backhaul link</button>':'')+'</div></div>'+dev.map(x=>'<div class="card" style="margin-bottom:8px"><div class="nf-statline"><div><b>'+esc(x.name)+'</b><div class="nf-detail-subtitle">'+esc(x.type)+' · '+esc(x.ip||'No management IP')+'</div></div><div class="tools"><button data-manage="'+esc(x.id)+'">Edit</button><button data-access="'+esc(x.id)+'">Connect</button></div></div></div>').join('')+(dev.length?'':'<p class="nf-empty">No equipment recorded.</p>')+(current==='Backhaul'?'<h3 class="section">Linked backhauls</h3>'+nfRows(links,[['name','Link'],['frequency','MHz'],['link_capacity','Capacity Mbps'],['target_rssi','Target RSSI']]):'');
+   a.querySelector('[data-add-device]').onclick=()=>{d.close();form('equipment',null,{highsite_id:id,category,protocol:'https'})};
+   const link=a.querySelector('[data-add-link]');if(link)link.onclick=()=>{d.close();form('backhauls',null,{highsite_id:id})};
+   a.querySelectorAll('[data-manage]').forEach(b=>b.onclick=()=>{d.close();form('equipment',dev.find(x=>x.id===b.dataset.manage))});
+   a.querySelectorAll('[data-access]').forEach(b=>b.onclick=()=>access(dev.find(x=>x.id===b.dataset.access)));
+  }
+  a.querySelectorAll('tr[data-record]').forEach(tr=>tr.onclick=()=>{let c=current==='Access'?'sectors':current==='Customers'?'customers':current==='Outages'?'outages':current==='Backhaul'?'backhauls':'equipment';let record=all(c).find(x=>x.id===tr.dataset.record);if(record){d.close();if(c==='customers')customer360(record.id);else form(c,record)}});
+ }
+ draw();
+}
+function showGlobalSearch(){
+ const d=dialog('<h2>Search NetForge</h2><p class="nf-detail-subtitle">Find accounts, ticket numbers, highsites, equipment IPs and sectors.</p><input id="quick-search" autofocus placeholder="Start typing..." aria-label="Search all records"><div id="search-results" style="max-height:60vh;overflow:auto;margin-top:12px"></div><div style="text-align:right;margin-top:12px"><button id="search-close">Close</button></div>');
+ d.querySelector('#search-close').onclick=()=>d.close();const input=d.querySelector('#quick-search');input.focus();
+ const index=[['customers',['account','name','surname','address','phone','cpe_ip']],['tickets',['number','name','description']],['highsites',['name','number','address']],['sectors',['name','ssid','ip','frequency']],['equipment',['name','ip','serial_number','mac']],['ipam',['name','address','vlan']],['leads',['name','phone']]];
+ const draw=()=>{
+   const q=input.value.trim().toLowerCase(),target=d.querySelector('#search-results');
+   if(q.length<2){target.innerHTML='<p class="nf-empty">Enter at least two characters.</p>';return}
+   const hits=index.flatMap(([c,keys])=>all(c).filter(x=>keys.some(k=>String(x[k]||'').toLowerCase().includes(q))).map(x=>({c,x}))).slice(0,30);
+   target.innerHTML=hits.length?hits.map(({c,x},i)=>'<button class="nf-search-result" data-hit="'+i+'"><span><b>'+esc(x.account||x.name||x.number||x.address)+'</b><br><small>'+esc(x.number||x.ip||x.address||'')+'</small></span><span class="nf-status nf-neutral">'+esc(c)+'</span></button>').join(''):'<p class="nf-empty">No matching records.</p>';
+   target.querySelectorAll('[data-hit]').forEach(b=>b.onclick=()=>{let item=hits[Number(b.dataset.hit)];d.close();let route={equipment:'equipment',ipam:'ipam',leads:'leads'}[item.c]||item.c;go(route);detail(item.c,item.x.id)});
+ };
+ input.oninput=draw;input.onkeydown=e=>{if(e.key==='Enter')d.querySelector('[data-hit="0"]')?.click()};draw();
+}
+document.querySelector('#global-search').onclick=showGlobalSearch;
+document.addEventListener('keydown',e=>{if(e.key==='/'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){e.preventDefault();showGlobalSearch()}});
+
 document.querySelector('#logout').onclick=async()=>{try{await call({action:'logout'},'POST');await boot()}catch(e){alert(e.message)}};boot();
 </script></body></html>
