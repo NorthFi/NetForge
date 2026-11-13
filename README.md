@@ -37,3 +37,11 @@ This release is an **MVP and must not be considered production-hardened**.
 
 ## Future architecture
 When moving to self-hosted infrastructure, introduce PostgreSQL and a dedicated Python automation worker without changing the frontend's functional modules.
+
+## Expanded operations release (2026-11-13)
+- New Dashboard tab: customer count, open/unassigned/overdue tickets, highsites, outages, maintenance due, low stock, leads, changes, sector capacity.
+- New Operations tab: outages, preventive maintenance, inventory, sales leads, change register, IPAM.
+- Additional structured fields for customers (service/account lifecycle, VLAN, PPPoE, static IP, signal, billing), tickets (contact channel, impact, fault classification, SLA, resolution), highsites (tower, power, lease, inspection), equipment (asset, warranty, maintenance), sectors (RF configuration and capacity), backhauls (link design), staff/branches, packages and scripts.
+- CSV export for main customer/ticket/highsite/script lists and operations registers.
+- No automatic outage detection, SLA enforcement, stock reservations, IP conflict detection, script execution, network monitoring or external integrations are claimed. These are manual tracking records and dashboard summaries.
+- **Important:** This is a feature-development branch, not an audited production release. No live Afrihost deployment or end-to-end runtime test has been performed. Do not store sensitive customer records until security hardening and verification are complete.
