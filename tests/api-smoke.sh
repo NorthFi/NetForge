@@ -144,4 +144,14 @@ test "$(value revision)" = "3"
 api GET category=inventory "" 200
 test "$(php -r '$j=json_decode(file_get_contents($argv[1]),true);echo count($j[0]["movements"]??[]);' "$BASE/result.json")" = "1"
 
+
+# Splynx-style linked customer accounts must never introduce account cycles.
+api POST category=customers '{"name":"Parent Company","account":"CI-PARENT","account_status":"active"}' 201
+PARENT="$(value id)"
+api PUT category=customers "{\"id\":\"$CUSTOMER\",\"revision\":2,\"name\":\"Alice Updated\",\"account\":\"CI-001\",\"account_status\":\"active\",\"parent_customer_id\":\"$PARENT\",\"highsite_id\":\"$SITE\",\"sector_id\":\"$SECTOR\"}" 200
+test "$(value revision)" = "3"
+api PUT category=customers "{\"id\":\"$PARENT\",\"revision\":1,\"name\":\"Parent Company\",\"account\":\"CI-PARENT\",\"parent_customer_id\":\"$CUSTOMER\"}" 422
+api DELETE "category=customers&id=$PARENT" "" 409
+api PUT category=customers "{\"id\":\"$CUSTOMER\",\"revision\":3,\"name\":\"Alice Updated\",\"account\":\"CI-PARENT\",\"parent_customer_id\":\"$PARENT\",\"highsite_id\":\"$SITE\",\"sector_id\":\"$SECTOR\"}" 409
+
 echo "NetForge API smoke tests passed."

@@ -27,7 +27,7 @@ The private storage directory must be outside `public_html`. The API fails close
 ## Capabilities
 
 - Dashboard: customer totals, ticket queue, overdue work, site and stock alerts, and planned sector capacity.
-- CRM: customer 360° profiles, leads, communication history, linked services, tickets, assigned follow-up tasks, monthly manually entered usage, and customer equipment.
+- CRM: customer 360° profiles, business/family parent-child account links, leads, communication history, linked services, tickets, assigned follow-up tasks, monthly manually entered usage, and customer equipment.
 - Finance: manual invoice/payment registers; idempotent **preview-and-confirm monthly draft invoice generation** for active, priced services; controlled issue/void transitions; debtor ageing and manual reminder drafts; package catalogue; MRR and ARPU estimates; CSV exports. No automated payment capture or invoice delivery.
 - Networking: highsite workspaces (Overview / Distribution / Backhaul / Access / Power / Customers / Outages), access sectors, backhaul records, IP address register, incident tracking and infrastructure equipment.
 - WISP intelligence: subscriber distribution, manual RF health observations, sector capacity thresholds, frequency reuse warnings, outage impact preview, GPS-based topology drawing, link-budget estimate, midpoint first Fresnel-zone calculator and midpoint Earth-curvature bulge.
@@ -46,6 +46,8 @@ The private storage directory must be outside `public_html`. The API fails close
 6. Issue individual drafts when reviewed. Only issued invoices can receive allocated payments. An invoice with payments cannot be voided. Generated invoice snapshots cannot be directly edited or deleted.
 7. Use **Debtors** for ageing and copyable reminder text. Sending reminders is entirely manual; no messaging integration is active.
 8. Use **Reports** for estimated MRR, ARPU, support hours and usage summaries. These values are derived from manually stored source data, not live equipment telemetry.
+
+**Linked customer accounts:** Assign a parent account from the customer editor or create child accounts from Customer 360°. Cycles are rejected and parents with linked children cannot be deleted. This is for support and navigation only; automatic combined invoicing/payment consolidation is **not** enabled.
 
 **Billing restrictions:** Prices must be numeric, positive, and have at most two decimal places; there is no VAT calculation, proration, prepaid balance, credit-note/refund ledger, advance credit, payment gateway, or compliant tax invoice/PDF generation. Active services with missing prices are skipped and reported. Billing creation is a manual operator action, not a scheduled background process. Never use this for legal/tax invoices before implementing the jurisdiction-specific requirements.
 
