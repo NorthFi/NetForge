@@ -1,47 +1,71 @@
 # root/README.md
-# NetForge — ISP Operations Manager
+# NetForge — ISP / WISP Operations Manager
 
-NetForge is a cPanel-compatible, file-backed ISP management application.
+NetForge is an independently implemented, Splynx-inspired ISP management interface with additional WISP engineering tools. It does not include or redistribute Splynx source code, trademarks, graphics, or private APIs.
 
-## Current modules
-- Customers: account details, names, addresses, packages, branches, sector associations, CPE management details and location links.
-- Tickets: customer, highsite, VoIP and other service tickets; priority, status, notes, call logs, assignment and scheduling.
-- Planner: monthly day-based calendar, drag-and-drop tickets, branch filters and technician assignments.
-- Highsites: site numbers, locations, branch assignment, equipment grouped into distribution, backhaul, access and power.
-- Scripts: script library (text storage only; no execution).
-- Settings: branches, technicians, login staff, packages and sectors.
+## Architecture
 
-## Deploy to Afrihost cPanel
-1. Copy `index.html`, `.htaccess`, and `api/index.php` into `public_html/netforge/`.
-2. Ensure HTTPS and PHP 8.0+ with sessions and JSON.
-3. The PHP API must be able to create `netforge-private` outside `public_html`; if it cannot, hosting permissions must be fixed. It deliberately fails closed instead of storing sensitive data publicly.
-4. Browse to `https://northfi.co.za/netforge/` and create the initial administrator.
-5. Back up `netforge-private` regularly and test restoration.
+A static HTML/CSS/JavaScript frontend connects to a PHP 8.1+ JSON-file API, so the initial installation works on Afrihost cPanel without SQL, Node.js, Docker, Redis, or a persistent daemon.
 
-## Security and feature limitations
-This release is an **MVP and must not be considered production-hardened**.
-- No rate limiting or lockout on login; restrict exposure before using real customer data.
-- Staff roles: admin, dispatcher, technician, viewer. Only admin can manage staff and delete records; viewer cannot edit. Fine-grained authorization is not yet implemented.
-- Equipment access: browser URLs open for HTTP(S). SSH and Winbox show connection instructions only. Browser launching of native tools is not reliable.
-- **Device passwords are deliberately not collected or stored.** A credential vault and authenticated agent are required first.
-- Scripts are stored as text; there is no execution engine, device connectivity or remote job scheduling yet.
-- There is no referential integrity enforcement; deleting a highsite, sector or customer may leave dangling references.
-- Staff passwords cannot be reset in the UI yet.
-- Existing initial administrator remains in a separate auth JSON file; additional staff are stored in staff.json.
-- JSON collections are individually locked and atomically replaced, but multi-collection updates are not transactional.
-- No built-in backups, import pipeline, or automated monitoring.
-- CSV export from the earlier version is not included in the redesigned interface yet.
+```
+public_html/netforge/
+  index.html
+  .htaccess
+  assets/
+    netforge.css
+    netforge.js
+  api/
+    index.php
+# Private account directory (automatically created)
+netforge-private/
+  *.json
+  *.lock
+```
 
-## Branches
-`netforge-isp-manager` is the development branch. `Published` is unchanged.
+The private storage directory must be outside `public_html`. The API fails closed if the directory cannot be initialized safely. File records use exclusive locks and temporary-file rename for atomic writes.
 
-## Future architecture
-When moving to self-hosted infrastructure, introduce PostgreSQL and a dedicated Python automation worker without changing the frontend's functional modules.
+## Capabilities
 
-## Expanded operations release (2026-11-13)
-- New Dashboard tab: customer count, open/unassigned/overdue tickets, highsites, outages, maintenance due, low stock, leads, changes, sector capacity.
-- New Operations tab: outages, preventive maintenance, inventory, sales leads, change register, IPAM.
-- Additional structured fields for customers (service/account lifecycle, VLAN, PPPoE, static IP, signal, billing), tickets (contact channel, impact, fault classification, SLA, resolution), highsites (tower, power, lease, inspection), equipment (asset, warranty, maintenance), sectors (RF configuration and capacity), backhauls (link design), staff/branches, packages and scripts.
-- CSV export for main customer/ticket/highsite/script lists and operations registers.
-- No automatic outage detection, SLA enforcement, stock reservations, IP conflict detection, script execution, network monitoring or external integrations are claimed. These are manual tracking records and dashboard summaries.
-- **Important:** This is a feature-development branch, not an audited production release. No live Afrihost deployment or end-to-end runtime test has been performed. Do not store sensitive customer records until security hardening and verification are complete.
+- Dashboard: customer totals, ticket queue, overdue work, site and stock alerts, and planned sector capacity.
+- CRM: customer 360° profiles, leads, communication history, equipment, tickets and service records.
+- Finance: manual invoice and payment registers, invoice allocations summary, package catalogue and CSV exports. **Not automatic billing or accounting.**
+- Networking: highsite workspaces (Overview / Distribution / Backhaul / Access / Power / Customers / Outages), access sectors, backhaul records, IP address register, incident tracking and infrastructure equipment.
+- WISP intelligence: subscriber distribution, manual RF health observations, sector capacity thresholds, frequency reuse warnings, outage impact preview, GPS-based topology drawing, link-budget estimate, midpoint first Fresnel-zone calculator and midpoint Earth-curvature bulge.
+- Field operations: branch-aware technician scheduling, drag-and-drop ticket/work-order assignments, work orders, RF surveys, maintenance and on-call metadata.
+- Inventory: stock levels, reorder thresholds, suppliers and deployed customer/site equipment.
+- Scripts: editable library of script text and approval/risk metadata, **no remote execution**.
+- Administration: branch management, staff login accounts, technicians, package plans, sectors and settings.
+
+## Deployment (Afrihost cPanel)
+
+1. Upload `index.html`, `.htaccess`, `assets/`, and `api/` into `public_html/netforge/` while retaining the paths above.
+2. Use PHP **8.1 or newer**, with sessions and JSON enabled. Enable HTTPS for the hostname in cPanel.
+3. Confirm PHP can create a writable `netforge-private` directory in the account home, outside `public_html`. Never relocate this directory into the web root.
+4. Open `https://northfi.co.za/netforge/` and create the initial administrator using a unique password at least 14 characters long.
+5. Configure branches, highsites and sectors first; then assign each customer to their highsite and a sector belonging to that site.
+6. Store regular encrypted backups of `netforge-private`; test restoration, and restrict account directory access to the PHP process and authorized server administrators.
+
+The development branch `netforge-isp-manager` must be tested on a staging path before publishing. The `Published` branch remains unaffected.
+
+## Automated checks
+
+GitHub Actions runs a PHP syntax check, standalone JS syntax/screen verification and an authenticated API smoke test for admin bootstrap, highsite/sector/customer relationships, equipment, communications, service records, invoices/payments, RF observations, surveys, work orders, IPAM duplicate protection, delete guards, and optimistic concurrency.
+
+Workflow: `.github/workflows/netforge-ci.yml`.
+
+## Security and operational limitations
+
+This remains a staged MVP, not a claim of feature parity with Splynx and not an audited production billing or monitoring system.
+
+- No live SNMP, RouterOS API, RADIUS, PPPoE provisioning, TR-069 ACS, WhatsApp messaging, payment gateway, payment reconciliation, remote script execution, or network alarms yet.
+- RF calculations assume free-space propagation and configurable effective Earth radius. They do not model terrain, trees, buildings, multipath, or interference. All RF snapshots and site statuses are manually entered.
+- The GPS topology connects configured highsites visually; it is **not** a live bandwidth or availability map.
+- Session cookies are Secure/HttpOnly/SameSite. CSRF checks, initial RBAC and per-IP-and-user login throttling exist. Granular per-branch permissions, MFA and comprehensive penetration testing are still required.
+- Device management passwords are deliberately excluded from file storage; browser access only opens HTTP(S) links. Winbox and SSH require a trusted workstation or future secure agent.
+- Records have optimistic revisions, but inter-collection updates are not transactional. Branch and service references need more comprehensive integrity checks before larger deployments.
+- Never store payment card details, API secrets, or passwords in free-text notes, scripts or equipment records.
+- PHP is file-backed and intended for small deployments. Migrating later to PostgreSQL and a dedicated automation worker is strongly recommended.
+
+## Licensing and independence
+
+NetForge uses an original layout and implementation inspired by common ISP CRM conventions. Splynx is a separate product and trademark.

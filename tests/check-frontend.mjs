@@ -4,28 +4,22 @@ import { Script } from 'node:vm';
 import { strict as assert } from 'node:assert';
 
 const html = readFileSync('index.html', 'utf8');
-const match = html.match(/<script>([\s\S]*?)<\/script>/);
-assert.ok(match, 'index.html must contain a JavaScript application');
-new Script(match[1], { filename: 'netforge-inline.js' });
+const js = readFileSync('assets/netforge.js', 'utf8');
+const css = readFileSync('assets/netforge.css', 'utf8');
 
-const requiredViews = [
-  'dashboard', 'wisp', 'customers', 'tickets', 'planner',
-  'highsites', 'sectors', 'backhauls', 'finance', 'surveys',
-  'workorders', 'inventory', 'scripts', 'settings',
-];
-for (const view of requiredViews) {
-  assert.ok(html.includes("'"+view+"'"), 'Missing navigation entry ' + view);
-}
+assert.ok(html.includes('src="assets/netforge.js"'), 'Missing bundled app script');
+assert.ok(html.includes('href="assets/netforge.css"'), 'Missing theme stylesheet');
+assert.ok(!/<script\s*>/i.test(html), 'Do not use inline JavaScript');
+new Script(js, { filename: 'assets/netforge.js' });
 
-const requiredFunctions = [
-  'customer360', 'site360', 'finance', 'wisp',
-  'schedule', 'showGlobalSearch', 'exportCollection',
-];
-for (const func of requiredFunctions) {
-  assert.ok(match[1].includes('function ' + func + '('), 'Missing function ' + func);
-}
-
-assert.ok(html.includes('api/index.php'), 'Missing PHP API endpoint');
-assert.ok(html.includes('X-CSRF-Token'), 'Missing CSRF header');
-assert.ok(html.includes('revision'), 'Missing optimistic record revisions');
-console.log('NetForge frontend syntax and essential screen checks passed.');
+const views = ['dashboard', 'wisp', 'customers', 'tickets', 'planner', 'highsites',
+  'sectors', 'backhauls', 'finance', 'surveys', 'workorders', 'inventory', 'scripts', 'settings'];
+for (const view of views) assert.ok(js.includes("'" + view + "'"), 'Missing navigation: ' + view);
+const features = ['customer360', 'site360', 'finance', 'wisp', 'schedule', 'showGlobalSearch', 'exportCollection'];
+for (const name of features) assert.ok(js.includes('function ' + name + '('), 'Missing function: ' + name);
+for (const selector of ['.shell', '.nf-nav-section', '.nf-status', '.card'])
+  assert.ok(css.includes(selector), 'Missing selector: ' + selector);
+assert.ok(js.includes('api/index.php'), 'Missing API URL');
+assert.ok(js.includes('X-CSRF-Token'), 'Missing CSRF header');
+assert.ok(js.includes('revision'), 'Missing optimistic revisions');
+console.log('NetForge frontend syntax and screen checks passed.');
