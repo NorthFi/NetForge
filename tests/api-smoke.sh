@@ -85,4 +85,63 @@ api PUT category=customers "{\"id\":\"$CUSTOMER\",\"revision\":1,\"name\":\"Stal
 
 api GET category=customers "" 200
 grep -q 'Alice Updated' "$BASE/result.json"
+
+# Recurring billing: package price lookup, draft creation, repeated-run protection,
+# immutable generated values, issue transition and payment authorization.
+api POST category=packages '{"name":"CI 20 Mbps","price":"399.90","speed":"20M"}' 201
+api POST category=services "{\"name\":\"CI monthly access\",\"status\":\"active\",\"customer_id\":\"$CUSTOMER\",\"highsite_id\":\"$SITE\",\"sector_id\":\"$SECTOR\",\"package\":\"CI 20 Mbps\"}" 201
+PAID_SERVICE="$(value id)"
+api GET "action=billing_preview&period=2026-11" "" 200
+test "$(value ready_total)" = "399.90"
+test "$(php -r '$j=json_decode(file_get_contents($argv[1]),true);echo count($j["ready"]);' "$BASE/result.json")" = "1"
+TOKEN="$(value token)"
+api POST action=billing_generate "{\"period\":\"2026-11\",\"token\":\"$TOKEN\"}" 201
+test "$(value created)" = "1"
+# Replaying a stale quote never duplicates a monthly invoice.
+api POST action=billing_generate "{\"period\":\"2026-11\",\"token\":\"$TOKEN\"}" 409
+api GET "action=billing_preview&period=2026-11" "" 200
+test "$(php -r '$j=json_decode(file_get_contents($argv[1]),true);echo count($j["ready"]);' "$BASE/result.json")" = "0"
+test "$(php -r '$j=json_decode(file_get_contents($argv[1]),true);echo count($j["existing"]);' "$BASE/result.json")" = "1"
+
+api GET category=invoices "" 200
+DRAFT="$(php -r '$j=json_decode(file_get_contents($argv[1]),true);foreach($j as $r){if(($r["billing_period"]??"")==="2026-11"){echo $r["id"];break;}}' "$BASE/result.json")"
+test -n "$DRAFT"
+api POST category=payments "{\"name\":\"Invalid early EFT\",\"customer_id\":\"$CUSTOMER\",\"invoice_id\":\"$DRAFT\",\"amount\":\"5\"}" 422
+api POST action=invoice_issue "{\"id\":\"$DRAFT\",\"revision\":1}" 200
+test "$(value status)" = "issued"
+test "$(value revision)" = "2"
+api POST category=payments "{\"name\":\"Real EFT\",\"customer_id\":\"$CUSTOMER\",\"invoice_id\":\"$DRAFT\",\"amount\":\"100.00\"}" 201
+api POST action=invoice_void "{\"id\":\"$DRAFT\",\"revision\":2,\"reason\":\"Incorrectly generated invoice\"}" 409
+api PUT category=invoices "{\"id\":\"$DRAFT\",\"revision\":2,\"name\":\"Tampered recurring invoice\",\"amount\":\"1\",\"status\":\"issued\"}" 409
+
+# Helpdesk timeline and work logging.
+api POST category=tickets "{\"name\":\"Check subscriber radio\",\"type\":\"customer\",\"status\":\"open\",\"priority\":\"high\",\"customer_id\":\"$CUSTOMER\"}" 201
+TICKET="$(value id)"
+api POST category=ticket_worklogs "{\"name\":\"Remote diagnosis\",\"ticket_id\":\"$TICKET\",\"minutes\":\"35\",\"description\":\"Checked signal\"}" 201
+test "$(value performed_by)" = "ciadmin"
+api POST category=ticket_worklogs "{\"name\":\"Invalid work duration\",\"ticket_id\":\"$TICKET\",\"minutes\":\"0\"}" 422
+api POST category=todos "{\"name\":\"Phone customer tomorrow\",\"customer_id\":\"$CUSTOMER\",\"ticket_id\":\"$TICKET\",\"status\":\"open\",\"due_date\":\"2026-11-14\"}" 201
+api DELETE "category=tickets&id=$TICKET" "" 409
+
+# Manual bandwidth usage is linked to its service, without network enforcement.
+api POST category=usage_records "{\"name\":\"November usage\",\"service_id\":\"$PAID_SERVICE\",\"customer_id\":\"$CUSTOMER\",\"period\":\"2026-11\",\"download_gb\":\"12.5\",\"upload_gb\":\"3.2\",\"cap_gb\":\"100\"}" 201
+api POST category=usage_records "{\"name\":\"Bad service\",\"service_id\":\"ffffffffffffffffffffffffffffffff\",\"customer_id\":\"$CUSTOMER\",\"period\":\"2026-11\"}" 422
+
+# Atomic stock movements with stale revision protection and idempotency keys.
+api POST category=inventory '{"name":"CPE Flex Mount","sku":"NF-MOUNT","quantity":"10","minimum":"5"}' 201
+STOCK="$(value id)"
+KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+api POST action=stock_adjust "{\"id\":\"$STOCK\",\"revision\":1,\"delta\":\"-3\",\"reason\":\"Allocated to customer CI-001\",\"request_id\":\"$KEY\"}" 200
+test "$(value quantity)" = "7"
+test "$(value revision)" = "2"
+api POST action=stock_adjust "{\"id\":\"$STOCK\",\"revision\":1,\"delta\":\"-3\",\"reason\":\"Allocated to customer CI-001\",\"request_id\":\"$KEY\"}" 200
+test "$(value duplicate)" = "1"
+api POST action=stock_adjust "{\"id\":\"$STOCK\",\"revision\":1,\"delta\":\"-1\",\"reason\":\"Different movement\",\"request_id\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}" 409
+api POST action=stock_adjust "{\"id\":\"$STOCK\",\"revision\":2,\"delta\":\"-999\",\"reason\":\"Invalid reduction\",\"request_id\":\"cccccccccccccccccccccccccccccccc\"}" 422
+api PUT category=inventory "{\"id\":\"$STOCK\",\"revision\":2,\"name\":\"CPE Flex Mount\",\"sku\":\"NF-MOUNT\",\"quantity\":\"12\",\"minimum\":\"5\"}" 409
+api PUT category=inventory "{\"id\":\"$STOCK\",\"revision\":2,\"name\":\"CPE Flex Mount\",\"sku\":\"NF-MOUNT\",\"quantity\":\"7\",\"minimum\":\"5\"}" 200
+test "$(value revision)" = "3"
+api GET category=inventory "" 200
+test "$(php -r '$j=json_decode(file_get_contents($argv[1]),true);echo count($j[0]["movements"]??[]);' "$BASE/result.json")" = "1"
+
 echo "NetForge API smoke tests passed."
