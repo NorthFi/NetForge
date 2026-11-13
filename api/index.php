@@ -148,6 +148,18 @@ try {
         if (($_SESSION['role']??'')!=='admin') respond(['error'=>'Admin only'],403);
         $id=(string)($_GET['id']??'');if (!preg_match('/^[a-f0-9]{32}$/',$id)) respond(['error'=>'Invalid ID'],422);
         if ($category==='jobs') respond(['error'=>'Job execution is disabled'],403);
+        // Prevent destructive deletions that would orphan related records.
+        $references=[
+          'highsites'=>[['sectors','highsite_id'],['customers','highsite_id'],['equipment','highsite_id'],['backhauls','highsite_id'],['backhauls','remote_highsite_id'],['tickets','highsite_id']],
+          'sectors'=>[['customers','sector_id']],
+          'customers'=>[['tickets','customer_id'],['equipment','customer_id']],
+          'branches'=>[['customers','branch_id'],['highsites','branch_id'],['technicians','branch_id'],['tickets','branch_id']],
+          'technicians'=>[['tickets','technician_id']],
+        ];
+        foreach(($references[$category]??[]) as [$collection,$field]){
+          $used=locked($collection,fn($rows)=>count(array_filter($rows,fn($row)=>($row[$field]??'')===$id)));
+          if($used>0)respond(['error'=>"Cannot delete: $used related record(s) in $collection. Reassign them first."],409);
+        }
         $deleted=locked($category,function($rows,$path)use($id){$next=array_values(array_filter($rows,fn($r)=>($r['id']??'')!==$id));if(count($next)===count($rows))return false;savejson($path,$next);return true;});
         if (!$deleted) respond(['error'=>'Not found'],404);
         audit('delete',$category,$id);respond(['ok'=>true]);
