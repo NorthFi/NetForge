@@ -140,6 +140,36 @@ try {
     if ($method==='POST' && $action==='logout') { csrf(); $_SESSION=[]; session_destroy(); respond(['ok'=>true]); }
 
 
+
+    // Status transitions retain invoices and never mutate the original amount.
+    if(in_array($action,['invoice_issue','invoice_void'],true)&&$method==='POST'){
+        if(($_SESSION['role']??'')!=='admin')respond(['error'=>'Only an administrator may issue or void invoices'],403);
+        csrf();$b=body();$id=(string)($b['id']??'');$revision=(int)($b['revision']??0);
+        $reason=trim((string)($b['reason']??''));
+        if(!preg_match('/^[a-f0-9]{32}$/',$id)||$revision<1)respond(['error'=>'Valid invoice and revision required'],422);
+        if($action==='invoice_void'&&(strlen($reason)<5||strlen($reason)>500))respond(['error'=>'Voiding requires a reason of 5–500 characters'],422);
+        $updated=locked('invoices',function($rows,$path)use($action,$id,$revision,$reason){
+            foreach($rows as &$invoice){
+                if(($invoice['id']??'')!==$id)continue;
+                if((int)($invoice['revision']??1)!==$revision)respond(['error'=>'Invoice was changed. Refresh first'],409);
+                $status=(string)($invoice['status']??'draft');
+                if($action==='invoice_issue'&&$status!=='draft')respond(['error'=>'Only draft invoices may be issued'],409);
+                if($action==='invoice_void'){
+                   if(!in_array($status,['draft','issued'],true))respond(['error'=>'Only draft or issued invoices may be voided'],409);
+                   $applied=locked('payments',fn($items)=>count(array_filter($items,fn($x)=>($x['invoice_id']??'')===$id)));
+                   if($applied)respond(['error'=>'Invoice has payments; reconcile before voiding'],409);
+                   $invoice['void_reason']=$reason;$invoice['voided_by']=$_SESSION['username'];
+                }
+                $invoice['status']=$action==='invoice_issue'?'issued':'void';
+                $invoice['revision']=$revision+1;
+                $invoice['updated_at']=gmdate('c');
+                $result=$invoice;savejson($path,$rows);return $result;
+            }
+            respond(['error'=>'Invoice not found'],404);
+        });
+        audit($action,'invoices',$id);
+        respond($updated);
+    }
     if($action==='stock_adjust'&&$method==='POST'){
         if(!in_array($_SESSION['role']??'',['admin','dispatcher'],true))respond(['error'=>'Stock adjustments require admin or dispatcher'],403);
         csrf();$b=body();$id=(string)($b['id']??'');$revision=(int)($b['revision']??0);
@@ -300,6 +330,8 @@ try {
         if($category==='payments'&&($item['invoice_id']??'')!==''){
           $matching=locked('invoices',fn($r)=>array_values(array_filter($r,fn($i)=>($i['id']??'')===$item['invoice_id'])));
           if(count($matching)!==1)respond(['error'=>'Referenced invoice does not exist'],422);
+          if(in_array($matching[0]['status']??'',['draft','void'],true))
+             respond(['error'=>'Payments cannot be allocated to draft or void invoices'],422);
           if(($matching[0]['customer_id']??'')!==($item['customer_id']??''))
             respond(['error'=>'Payment customer must match the referenced invoice customer'],422);
         }
