@@ -243,12 +243,13 @@ function workspaceTable(target,c,keys,filter){
 function finance(){
  const el=document.querySelector('#content'),invoices=all('invoices'),payments=all('payments');
  const toNum=x=>Number(x)||0;
- const total=invoices.reduce((n,i)=>n+toNum(i.amount),0),received=payments.reduce((n,p)=>n+toNum(p.amount),0);
- const assigned=invoices.reduce((n,i)=>n+Math.min(toNum(i.amount),payments.filter(p=>p.invoice_id===i.id).reduce((x,p)=>x+toNum(p.amount),0)),0);
+ const issued=invoices.filter(i=>!['draft','void'].includes(i.status)),drafts=invoices.filter(i=>i.status==='draft');
+ const total=issued.reduce((n,i)=>n+toNum(i.amount),0),received=payments.reduce((n,p)=>n+toNum(p.amount),0);
+ const assigned=issued.reduce((n,i)=>n+Math.min(toNum(i.amount),payments.filter(p=>p.invoice_id===i.id).reduce((x,p)=>x+toNum(p.amount),0)),0);
  const balance=Math.max(0,total-assigned);
  const money=n=>new Intl.NumberFormat('en-ZA',{style:'currency',currency:'ZAR'}).format(n);
- const overdue=invoices.filter(i=>i.due_date&&i.due_date<dateKey(new Date())&&toNum(i.amount)>payments.filter(p=>p.invoice_id===i.id).reduce((x,p)=>x+toNum(p.amount),0)).length;
- el.insertAdjacentHTML('beforeend','<div class="nf-kicker">Financial administration</div><h2>Finance</h2><p class="muted">Manual invoice and payment register only. This is not an automated billing ledger or tax-compliant invoice engine.</p><div class="grid">'+[['Recorded invoices',money(total)],['Recorded payments',money(received)],['Unallocated invoice balance',money(balance)],['Overdue invoice records',overdue]].map(([k,v])=>'<div class="card nf-metric"><small>'+esc(k)+'</small><div class="metric" style="font-size:25px">'+esc(v)+'</div></div>').join('')+'</div><div class="tabs" id="finance-tabs"></div><div id="finance-body" class="section"></div>');
+ const overdue=issued.filter(i=>i.due_date&&i.due_date<dateKey(new Date())&&toNum(i.amount)>payments.filter(p=>p.invoice_id===i.id).reduce((x,p)=>x+toNum(p.amount),0)).length;
+ el.insertAdjacentHTML('beforeend','<div class="nf-kicker">Financial administration</div><h2>Finance</h2><p class="muted">Invoice and payment registers, with monthly draft generation. This is not a tax-compliant accounting or payment system.</p><div class="grid">'+[['Recorded invoices',money(total)],['Recorded payments',money(received)],['Unallocated invoice balance',money(balance)],['Overdue invoice records',overdue],['Unissued drafts',drafts.length]].map(([k,v])=>'<div class="card nf-metric"><small>'+esc(k)+'</small><div class="metric" style="font-size:25px">'+esc(v)+'</div></div>').join('')+'</div><div class="tabs" id="finance-tabs"></div><div id="finance-body" class="section"></div>');
  let active='invoices',spec={invoices:['number','name','customer_id','due_date','amount','status'],payments:['reference','name','customer_id','invoice_id','amount','payment_date'],services:['name','customer_id','service_type','package','status','highsite_id','sector_id'],packages:['name','speed','price','download_speed','upload_speed']};
  function draw(){
   document.querySelector('#finance-tabs').innerHTML=Object.keys(spec).map(x=>'<button data-fin="'+x+'" class="'+(x===active?'active':'')+'">'+esc(specs[x].title)+'</button>').join('');
@@ -256,6 +257,10 @@ function finance(){
   workspaceTable(document.querySelector('#finance-body'),active,spec[active]);
  }
  draw();
+ el.insertAdjacentHTML('beforeend','<div class="tools section"><button id="finance-billing">Monthly billing cycles</button><button id="finance-debtors">Debtors & ageing</button><button id="finance-report">Reports</button></div>');
+ el.querySelector('#finance-billing').onclick=()=>go('billing');
+ el.querySelector('#finance-debtors').onclick=()=>go('debtors');
+ el.querySelector('#finance-report').onclick=()=>go('reports');
 }
 
 const nfMoney=n=>new Intl.NumberFormat('en-ZA',{style:'currency',currency:'ZAR'}).format(Number(n)||0);
@@ -326,7 +331,8 @@ function debtors(){
  el.insertAdjacentHTML('beforeend','<div class="nf-kicker">Finance · Account receivables</div><div class="nf-pagehead"><div><h2>Debtors and invoice ageing</h2><p class="muted">Based on issued/manual invoice values and explicitly linked payments only. Draft and void invoices are excluded.</p></div><button id="debtor-export">Export CSV</button></div><div class="grid">'+buckets.map(([name,filter])=>'<div class="card nf-metric"><small>'+esc(name)+'</small><div class="metric" style="font-size:24px">'+nfMoney(rows.filter(filter).reduce((n,r)=>n+r.remaining,0))+'</div></div>').join('')+'</div><div class="section card tablewrap"><table><thead><tr><th>Account</th><th>Invoice</th><th>Due</th><th>Days past due</th><th>Balance (ZAR)</th><th>Reminder</th></tr></thead><tbody>'+rows.sort((a,b)=>b.age-a.age).map(i=>'<tr><td>'+esc(lookup('customers',i.customer_id))+'</td><td>'+esc(i.number)+'</td><td>'+esc(i.due)+'</td><td>'+i.age+'</td><td>'+nfMoney(i.remaining)+'</td><td><button data-reminder="'+esc(i.id)+'">Copy draft</button></td></tr>').join('')+'</tbody></table>'+(rows.length?'':'<p class="nf-empty" style="padding:24px">No outstanding issued invoices found.</p>')+'</div>');
  el.querySelector('#debtor-export').onclick=()=>{
   const cols=['account','invoice','due','days','balance_zar'];
-  const lines=[cols.join(','),...rows.map(r=>[lookup('customers',r.customer_id),r.number,r.due,r.age,r.remaining.toFixed(2)].map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(','))];
+  const safeCsv=v=>{let str=String(v??'');if(/^\s*[=+@-]/.test(str))str="'"+str;return '"'+str.replace(/"/g,'""')+'"';};
+  const lines=[cols.join(','),...rows.map(r=>[lookup('customers',r.customer_id),r.number,r.due,r.age,r.remaining.toFixed(2)].map(safeCsv).join(','))];
   const blob=new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=url;a.download='netforge-debtors.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
  };
