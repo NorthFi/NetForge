@@ -58,15 +58,15 @@ try {
         if (!$handle) respond(['error'=>'Already configured or cannot initialize'],409);
         $auth=['username'=>$user,'hash'=>password_hash($pass,PASSWORD_DEFAULT)];
         fwrite($handle,json_encode($auth,JSON_THROW_ON_ERROR)); fclose($handle); chmod(datafile('auth'),0600);
-        session_regenerate_id(true); $_SESSION['user']=true; $_SESSION['username']=$user; $_SESSION['csrf']=bin2hex(random_bytes(32));
+        session_regenerate_id(true); $_SESSION['user']=true; $_SESSION['username']=$user; $_SESSION['role']='admin'; $_SESSION['csrf']=bin2hex(random_bytes(32));
         respond(['ok'=>true,'csrf'=>$_SESSION['csrf']],201);
     }
     if ($method==='POST' && $action==='login') {
         $b=body(); $auth=json_decode((string)@file_get_contents(datafile('auth')),true);
         $matched=is_array($auth)&&hash_equals($auth['username'],(string)($b['username']??''))&&password_verify((string)($b['password']??''),$auth['hash']);
-        if(!$matched){$staff=locked('staff',fn($r)=>$r);foreach($staff as $member){if(hash_equals((string)($member['username']??''),(string)($b['username']??''))&&password_verify((string)($b['password']??''),(string)($member['password_hash']??''))){$matched=true;$auth=['username'=>$member['username']];break;}}}
+        if(!$matched){$staff=locked('staff',fn($r)=>$r);foreach($staff as $member){if(hash_equals((string)($member['username']??''),(string)($b['username']??''))&&password_verify((string)($b['password']??''),(string)($member['password_hash']??''))){$matched=true;$auth=['username'=>$member['username'],'role'=>$member['role']??'viewer'];break;}}}
         if(!$matched){usleep(350000);respond(['error'=>'Invalid credentials'],401);}
-        session_regenerate_id(true); $_SESSION['user']=true; $_SESSION['username']=$auth['username']; $_SESSION['csrf']=bin2hex(random_bytes(32));
+        session_regenerate_id(true); $_SESSION['user']=true; $_SESSION['username']=$auth['username']; $_SESSION['role']=$auth['role']??'admin'; $_SESSION['csrf']=bin2hex(random_bytes(32));
         respond(['ok'=>true,'csrf'=>$_SESSION['csrf']]);
     }
     if (empty($_SESSION['user'])) respond(['error'=>'Authentication required'],401);
@@ -74,8 +74,10 @@ try {
     $allowed=['customers','highsites','sectors','equipment','backhauls','scripts','jobs','tickets','branches','technicians','packages','staff'];
     $category=(string)($_GET['category']??'');
     if (!in_array($category,$allowed,true)) respond(['error'=>'Unknown category'],404);
+    if ($category==='staff' && ($_SESSION['role']??'')!=='admin') respond(['error'=>'Admin only'],403);
     if ($method==='GET') respond(locked($category,function($rows)use($category){if($category==='staff')return array_map(fn($x)=>['id'=>$x['id'],'name'=>$x['name']??'','username'=>$x['username']??'','role'=>$x['role']??'viewer','created_at'=>$x['created_at']??''],$rows);return $rows;}));
     csrf();
+    if (($_SESSION['role']??'viewer')==='viewer') respond(['error'=>'Read-only role'],403);
     if ($method==='POST' || $method==='PUT') {
         $b=body();
         if ($category==='jobs') respond(['error'=>'Script execution requires an external agent'],403);
@@ -103,6 +105,7 @@ try {
         if($category==='tickets'&&!in_array($item['type'],['customer','highsite','voip','other'],true))respond(['error'=>'Invalid ticket type'],422);
         if($category==='equipment'&&!in_array($item['category'],['distribution','backhaul','access','power','cpe'],true))respond(['error'=>'Invalid equipment category'],422);
         if($category==='staff'){
+          if(($_SESSION['role']??'')!=='admin')respond(['error'=>'Admin only'],403);
           if($method==='PUT')respond(['error'=>'Staff updates not yet supported'],405);
           if(!in_array($item['role'],['admin','dispatcher','technician','viewer'],true))respond(['error'=>'Invalid role'],422);
           $password=(string)($b['password']??'');
@@ -122,6 +125,7 @@ try {
         respond($item,201);
     }
     if ($method==='DELETE') {
+        if (($_SESSION['role']??'')!=='admin') respond(['error'=>'Admin only'],403);
         $id=(string)($_GET['id']??'');if (!preg_match('/^[a-f0-9]{32}$/',$id)) respond(['error'=>'Invalid ID'],422);
         if ($category==='jobs') respond(['error'=>'Job execution is disabled'],403);
         $deleted=locked($category,function($rows,$path)use($id){$next=array_values(array_filter($rows,fn($r)=>($r['id']??'')!==$id));if(count($next)===count($rows))return false;savejson($path,$next);return true;});
