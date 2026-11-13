@@ -78,7 +78,7 @@ function billingProposal(string $period,array $invoices): array {
         if(($service['status']??'')!=='active')continue;
         $id=(string)($service['id']??'');$customer=$byCustomer[$service['customer_id']??'']??null;
         $customerName=$customer['account']??'';
-        if(!$customer||in_array($customer['account_status']??'',['cancelled','suspended'],true)){
+        if(!$customer||!in_array($customer['account_status']??'',['','active'],true)){
             $skipped[]=['service_id'=>$id,'service'=>$service['name']??'','reason'=>'Missing or inactive customer'];continue;
         }
         $packageName=trim((string)($service['package']??''));
@@ -295,9 +295,9 @@ try {
 
         // Non-executable operational records must use valid finite values; never infer telemetry.
         if(in_array($category,['payments','invoices'],true)){
-          if(!is_numeric($item['amount']??null) || (float)$item['amount']<0 || !is_finite((float)$item['amount']))
-            respond(['error'=>'Amount must be a finite nonnegative number'],422);
-          $item['amount']=number_format((float)$item['amount'],2,'.','');
+          $cents=amountCents((string)($item['amount']??''));
+          if($cents===null)respond(['error'=>'Amount must be a nonnegative decimal with at most two places'],422);
+          $item['amount']=number_format($cents/100,2,'.','');
         }
         if($category==='activities') {
           $item['performed_by']=$_SESSION['username'];
@@ -334,6 +334,15 @@ try {
              respond(['error'=>'Payments cannot be allocated to draft or void invoices'],422);
           if(($matching[0]['customer_id']??'')!==($item['customer_id']??''))
             respond(['error'=>'Payment customer must match the referenced invoice customer'],422);
+          // Prevent allocating a payment above the invoice balance while credits
+          // and refunds are not yet modeled in this file-backed implementation.
+          $prior=locked('payments',fn($rows)=>array_sum(array_map(
+              fn($row)=>(($row['invoice_id']??'')===$item['invoice_id']&&($row['id']??'')!==($b['id']??''))?(amountCents((string)($row['amount']??'0'))??0):0,$rows)));
+          $total=amountCents((string)($matching[0]['amount']??'0'));
+          $incoming=amountCents((string)$item['amount']);
+          if($total===null||$incoming===null||$prior+$incoming>$total)
+              respond(['error'=>'Payment exceeds remaining invoice balance. Use an unallocated payment for customer credit'],422);
+
         }
         if($category==='activities'&&($item['customer_id']??'')==='')respond(['error'=>'Communication event requires a customer'],422);
         if($category==='inventory'){
