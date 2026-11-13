@@ -426,11 +426,13 @@ function customer360(id){
   activities:all('activities').filter(x=>x.customer_id===id),
   link_checks:all('link_checks').filter(x=>x.customer_id===id),
   invoices:all('invoices').filter(x=>x.customer_id===id),
-  payments:all('payments').filter(x=>x.customer_id===id)
+  payments:all('payments').filter(x=>x.customer_id===id),
+  todos:all('todos').filter(x=>x.customer_id===id),
+  usage_records:all('usage_records').filter(x=>x.customer_id===id)
  };
  function quick(c,label,defaults={}){return '<button data-new="'+c+'">'+esc(label)+'</button>'}
  function draw(){
-  const panels=['Overview','Services','Equipment','Tickets','Activity','RF diagnostics','Billing'];
+  const panels=['Overview','Services','Equipment','Tickets','Activity','Tasks','Usage','RF diagnostics','Billing'];
   d.querySelector('#nf-profile-tabs').innerHTML=panels.map(x=>'<button data-panel="'+x+'" class="'+(x===current?'active':'')+'">'+x+'</button>').join('');
   d.querySelectorAll('[data-panel]').forEach(b=>b.onclick=()=>{current=b.dataset.panel;draw()});
   const area=d.querySelector('#nf-profile-content'),site=all('highsites').find(x=>x.id===r.highsite_id),sector=all('sectors').find(x=>x.id===r.sector_id);
@@ -456,6 +458,15 @@ function customer360(id){
   }else if(current==='Activity'){
    let acts=[...related.activities].sort((a,b)=>String(b.occurred_at).localeCompare(String(a.occurred_at)));
    area.innerHTML='<div class="toolbar"><h3>Calls and communication history</h3>'+quick('activities','+ Log interaction')+'</div>'+nfRows(acts,[['occurred_at','When'],['type','Type'],['channel','Channel'],['name','Subject'],['performed_by','Staff']]);
+
+  }else if(current==='Tasks'){
+    const tasks=related.todos;
+    area.innerHTML='<div class="toolbar"><h3>Follow-up tasks</h3>'+quick('todos','+ Add task')+'</div>'+nfRows(tasks,[['name','Task'],['due_date','Due'],['assigned_to','Assigned'],['status','Status']]);
+  }else if(current==='Usage'){
+    const records=[...related.usage_records].sort((a,b)=>String(b.period).localeCompare(String(a.period)));
+    area.innerHTML='<div class="toolbar"><div><h3>Subscriber usage</h3><small>Monthly manual usage snapshots; no live RADIUS statistics.</small></div>'+quick('usage_records','+ Record usage')+'</div>'+nfRows(records,[['period','Month'],['service_id','Service'],['download_gb','Download GB'],['upload_gb','Upload GB'],['cap_gb','Cap GB']]);
+    const over=records.filter(x=>Number(x.cap_gb)>0&&(Number(x.download_gb)||0)+(Number(x.upload_gb)||0)>Number(x.cap_gb));
+    if(over.length)area.insertAdjacentHTML('afterbegin','<div class="notice">'+over.length+' historical record(s) exceed entered usage caps. No throttling is performed.</div>');
   }else if(current==='RF diagnostics'){
    let snapshots=[...related.link_checks].sort((a,b)=>String(b.captured_at).localeCompare(String(a.captured_at)));
    area.innerHTML='<div class="toolbar"><div><h3>Subscriber RF history</h3><small>Manually recorded snapshots; no live SNMP or radio API collection.</small></div>'+quick('link_checks','+ Record RF check')+'</div>'+nfRows(snapshots,[['captured_at','When'],['rssi_dbm','RSSI dBm'],['snr_db','SNR dB'],['ccq','CCQ %'],['tx_mbps','TX Mbps'],['rx_mbps','RX Mbps']]);
@@ -463,10 +474,56 @@ function customer360(id){
    const total=related.invoices.reduce((n,x)=>n+(Number(x.amount)||0),0),paid=related.payments.reduce((n,x)=>n+(Number(x.amount)||0),0);
    area.innerHTML='<div class="grid">'+[['Recorded invoices',total],['Recorded payments',paid],['Unreconciled difference',total-paid]].map(([k,v])=>'<div class="card"><small>'+k+'</small><div class="metric" style="font-size:25px">R '+v.toFixed(2)+'</div></div>').join('')+'</div><div class="toolbar section"><h3>Invoice register</h3>'+quick('invoices','+ Invoice')+'</div>'+nfRows(related.invoices,[['number','Number'],['amount','ZAR'],['due_date','Due'],['status','Status']])+'<div class="toolbar section"><h3>Payments</h3>'+quick('payments','+ Payment')+'</div>'+nfRows(related.payments,[['reference','Reference'],['amount','ZAR'],['payment_date','Date']]);
   }
-  area.querySelectorAll('[data-new]').forEach(b=>b.onclick=()=>{let c=b.dataset.new,defaults={customer_id:id};if(c==='tickets')Object.assign(defaults,{type:'customer',name:'Customer support',status:'open',priority:'normal',branch_id:r.branch_id});if(c==='activities')Object.assign(defaults,{type:'call',channel:'phone',name:'Inbound call'});if(c==='equipment')Object.assign(defaults,{category:'cpe',protocol:'https',ownership:'isp-owned'});if(c==='services')Object.assign(defaults,{highsite_id:r.highsite_id,sector_id:r.sector_id,package:r.package,service_type:r.service_type||'wireless',status:'active'});if(c==='link_checks')Object.assign(defaults,{sector_id:r.sector_id});if(c==='workorders')Object.assign(defaults,{branch_id:r.branch_id});if(c==='surveys')Object.assign(defaults,{highsite_id:r.highsite_id,branch_id:r.branch_id,los_status:'unknown',status:'requested'});d.close();form(c,null,defaults)});
-  area.querySelectorAll('tr[data-record]').forEach(tr=>tr.onclick=()=>{let map={Services:'services',Tickets:'tickets',Activity:'activities','RF diagnostics':'link_checks'},c=map[current]||(current==='Billing'?(related.invoices.some(x=>x.id===tr.dataset.record)?'invoices':'payments'):null);if(!c)return;let row=all(c).find(x=>x.id===tr.dataset.record);if(row){d.close();form(c,row)}});
+  area.querySelectorAll('[data-new]').forEach(b=>b.onclick=()=>{let c=b.dataset.new,defaults={customer_id:id};if(c==='tickets')Object.assign(defaults,{type:'customer',name:'Customer support',status:'open',priority:'normal',branch_id:r.branch_id});if(c==='activities')Object.assign(defaults,{type:'call',channel:'phone',name:'Inbound call'});if(c==='equipment')Object.assign(defaults,{category:'cpe',protocol:'https',ownership:'isp-owned'});if(c==='services')Object.assign(defaults,{highsite_id:r.highsite_id,sector_id:r.sector_id,package:r.package,service_type:r.service_type||'wireless',status:'active'});if(c==='link_checks')Object.assign(defaults,{sector_id:r.sector_id});if(c==='todos')Object.assign(defaults,{name:'Customer follow-up',status:'open',due_date:dateKey(new Date())});if(c==='usage_records')Object.assign(defaults,{name:'Monthly usage',period:dateKey(new Date()).slice(0,7),source:'manual',service_id:related.services[0]?.id||''});if(c==='workorders')Object.assign(defaults,{branch_id:r.branch_id});if(c==='surveys')Object.assign(defaults,{highsite_id:r.highsite_id,branch_id:r.branch_id,los_status:'unknown',status:'requested'});d.close();form(c,null,defaults)});
+  area.querySelectorAll('tr[data-record]').forEach(tr=>tr.onclick=()=>{let map={Services:'services',Tickets:'tickets',Activity:'activities',Tasks:'todos',Usage:'usage_records','RF diagnostics':'link_checks'},c=map[current]||(current==='Billing'?(related.invoices.some(x=>x.id===tr.dataset.record)?'invoices':'payments'):null);if(!c)return;let row=all(c).find(x=>x.id===tr.dataset.record);if(row){d.close();form(c,row)}});
  }
  draw();
+}
+
+function ticket360(id){
+ const r=all('tickets').find(x=>x.id===id);if(!r)return;
+ const customer=all('customers').find(x=>x.id===r.customer_id);
+ const logs=all('ticket_worklogs').filter(x=>x.ticket_id===id).sort((a,b)=>String(b.work_date).localeCompare(String(a.work_date)));
+ const calls=all('activities').filter(x=>x.ticket_id===id).sort((a,b)=>String(b.occurred_at).localeCompare(String(a.occurred_at)));
+ const orders=all('workorders').filter(x=>x.ticket_id===id);
+ const logged=logs.reduce((n,x)=>n+(Number(x.minutes)||0),0);
+ const d=dialog('<div class="nf-pagehead"><div><div class="nf-kicker">Helpdesk · Ticket</div><h2>'+esc(r.name||r.number)+'</h2><small>'+esc(r.number)+' · '+esc(r.type)+' · '+esc(r.priority)+'</small></div><div class="tools"><button id="ticket-edit">Edit ticket</button><button id="ticket-close">Close</button></div></div><div class="grid">'+[['Status',r.status||'open'],['Assigned technician',lookup('technicians',r.technician_id)],['Due date',r.due_date||'Not configured'],['Time logged',(logged/60).toFixed(2)+' hours']].map(([k,v])=>'<div class="card"><small>'+esc(k)+'</small><div class="metric" style="font-size:18px">'+esc(v)+'</div></div>').join('')+'</div><div class="nf-grid-two section"><div class="card"><h3>Ticket context</h3>'+nfProperty('Customer',lookup('customers',r.customer_id))+nfProperty('Highsite',lookup('highsites',r.highsite_id))+nfProperty('Related outage',lookup('outages',r.outage_id))+nfProperty('Contact source',r.source)+nfProperty('Fault classification',r.fault_category)+nfProperty('Description',r.description)+nfProperty('Resolution',r.resolution)+(customer?'<button id="ticket-customer">Open customer profile</button>':'')+'</div><div class="card"><h3>Technician work log</h3><div class="toolbar"><span>'+logged+' minutes across '+logs.length+' entries</span><button id="log-work" class="primary">+ Log work</button></div>'+nfRows(logs,[['work_date','Date'],['name','Activity'],['minutes','Minutes'],['performed_by','Logged by']])+'</div></div><div class="nf-grid-two section"><div class="card"><div class="toolbar"><h3>Communications history</h3>'+(customer?'<button id="log-call">+ Log contact</button>':'')+'</div>'+nfRows(calls,[['occurred_at','When'],['type','Type'],['name','Subject'],['performed_by','Staff']])+'</div><div class="card"><div class="toolbar"><h3>Linked field work</h3><button id="job-from-ticket">+ Work order</button></div>'+nfRows(orders,[['name','Job'],['scheduled_date','Day'],['technician_id','Technician'],['status','Status']])+'</div></div>');
+ d.classList.add('nf-customer-modal');
+ d.querySelector('#ticket-close').onclick=()=>d.close();
+ d.querySelector('#ticket-edit').onclick=()=>{d.close();form('tickets',r)};
+ const openC=d.querySelector('#ticket-customer');if(openC)openC.onclick=()=>{d.close();customer360(r.customer_id)};
+ d.querySelector('#log-work').onclick=()=>{d.close();form('ticket_worklogs',null,{ticket_id:id,technician_id:r.technician_id,name:'Ticket work',minutes:'15',work_date:dateKey(new Date())})};
+ const callB=d.querySelector('#log-call');if(callB)callB.onclick=()=>{d.close();form('activities',null,{customer_id:r.customer_id,ticket_id:id,name:'Support call',type:'call',channel:'phone'})};
+ d.querySelector('#job-from-ticket').onclick=()=>{d.close();form('workorders',null,{ticket_id:id,customer_id:r.customer_id,highsite_id:r.highsite_id,technician_id:r.technician_id,branch_id:r.branch_id,status:'open',name:'Field work: '+r.name})};
+}
+function inventoryManager(){
+ const el=document.querySelector('#content'),rows=all('inventory');
+ const low=rows.filter(x=>Number(x.quantity)<Number(x.minimum)).length;
+ el.insertAdjacentHTML('beforeend','<div class="nf-kicker">Warehouse · Physical assets</div><div class="nf-pagehead"><div><h2>Stock management</h2><p class="muted">Record incoming and outgoing quantities with a reason and immutable per-item movement history.</p></div><div class="tools"><button id="inventory-export">Export CSV</button><button class="primary" id="inventory-new">+ New stock item</button></div></div><div class="grid">'+[['Stock lines',rows.length],['Items below minimum',low],['Total units recorded',rows.reduce((n,x)=>n+(Number(x.quantity)||0),0)]].map(([k,v])=>'<div class="card"><small>'+esc(k)+'</small><div class="metric">'+v+'</div></div>').join('')+'</div><div class="section"><input id="inventory-search" placeholder="Find SKU, item, supplier or shelf" aria-label="Inventory search" style="max-width:430px"></div><div id="inventory-table" class="section"></div>');
+ el.querySelector('#inventory-export').onclick=()=>exportCollection('inventory');
+ el.querySelector('#inventory-new').onclick=()=>form('inventory',null,{quantity:'0',minimum:'0'});
+ function draw(){
+  const q=el.querySelector('#inventory-search').value.trim().toLowerCase();
+  const matches=rows.filter(x=>!q||[x.name,x.sku,x.supplier,x.location].some(v=>String(v||'').toLowerCase().includes(q)));
+  el.querySelector('#inventory-table').innerHTML=table('inventory',['sku','name','category','branch_id','quantity','minimum','supplier','location'],matches);
+  el.querySelectorAll('#inventory-table tr[data-id]').forEach(tr=>tr.onclick=()=>inventoryDetail(tr.dataset.id));
+ }
+ el.querySelector('#inventory-search').oninput=draw;draw();
+}
+function inventoryDetail(id){
+ const r=all('inventory').find(x=>x.id===id);if(!r)return;
+ const d=dialog('<div class="nf-pagehead"><div><div class="nf-kicker">Stock ledger</div><h2>'+esc(r.name)+'</h2><small>'+esc(r.sku)+' · '+esc(lookup('branches',r.branch_id))+'</small></div><div class="tools"><button id="inv-edit">Edit details</button><button id="inv-close">Close</button></div></div><div class="grid"><div class="card"><small>Quantity on hand</small><div class="metric">'+esc(r.quantity||'0')+'</div></div><div class="card"><small>Reorder threshold</small><div class="metric">'+esc(r.minimum||'0')+'</div></div><div class="card"><small>Last revision</small><div class="metric">'+esc(r.revision||1)+'</div></div></div><div class="section card"><h3>Adjust stock</h3><form id="inv-adjust"><div class="formgrid"><div><label>Adjustment (+ received, − allocated)</label><input type="number" name="delta" step="1" required placeholder="e.g. 5 or -2"></div><div><label>Reason / reference</label><input name="reason" required minlength="5" maxlength="500" placeholder="Order, job or stocktake reference"></div></div><p id="inv-message" role="status"></p><button class="primary">Record movement</button></form></div><div class="section"><h3>Movement history</h3><div id="inv-history"></div></div>');
+ d.querySelector('#inv-close').onclick=()=>d.close();
+ d.querySelector('#inv-edit').onclick=()=>{d.close();form('inventory',r)};
+ const moves=[...(r.movements||[])].reverse();
+ d.querySelector('#inv-history').innerHTML=moves.length?nfRows(moves,[['time','Date'],['user','Staff'],['delta','Change'],['quantity','Balance'],['reason','Reason']]):'<p class="nf-empty">No stock movements recorded since this item was created.</p>';
+ d.querySelector('#inv-adjust').onsubmit=async e=>{
+  e.preventDefault();const values=Object.fromEntries(new FormData(e.target));
+  if(!globalThis.crypto?.randomUUID){d.querySelector('#inv-message').textContent='Secure browser support is required to create movement IDs.';return}
+  const key=crypto.randomUUID().replaceAll('-','');
+  try{await call({action:'stock_adjust'},'POST',{id:r.id,revision:r.revision??1,delta:values.delta,reason:values.reason,request_id:key});d.close();await refresh()}
+  catch(err){d.querySelector('#inv-message').textContent=err.message}
+ };
 }
 function site360(id){
  const r=all('highsites').find(x=>x.id===id);if(!r)return;
