@@ -84,10 +84,10 @@ try {
         $name=trim((string)($b['name']??$b['title']??$b['account']??''));
         if ($name==='' || strlen($name)>160) respond(['error'=>'Name/account/title required (max 160 bytes)'],422);
         $fields=[
-          'customers'=>['account','name','surname','address','phone','email','package','branch_id','sector_id','latitude','longitude','cpe_ip','cpe_username','notes'],
+          'customers'=>['account','name','surname','address','phone','email','package','branch_id','highsite_id','sector_id','latitude','longitude','cpe_ip','cpe_username','notes'],
           'tickets'=>['name','number','type','status','priority','customer_id','highsite_id','branch_id','technician_id','scheduled_date','description','call_log'],
           'highsites'=>['name','number','address','branch_id','latitude','longitude','notes'],
-          'equipment'=>['name','type','category','highsite_id','customer_id','ip','username','protocol','port','notes'],
+          'equipment'=>['name','type','category','highsite_id','customer_id','ownership','serial_number','ip','username','protocol','port','notes'],
           'branches'=>['name','address','phone'],
           'technicians'=>['name','surname','branch_id','phone','active'],
           'scripts'=>['name','language','description','body','risk'],
@@ -103,7 +103,21 @@ try {
           $item[$field]=substr(trim((string)$value),0,in_array($field,['description','notes','call_log'],true)?4000:($field==='body'?16000:300));
         }
         if($category==='tickets'&&!in_array($item['type'],['customer','highsite','voip','other'],true))respond(['error'=>'Invalid ticket type'],422);
-        if($category==='equipment'&&!in_array($item['category'],['distribution','backhaul','access','power','cpe'],true))respond(['error'=>'Invalid equipment category'],422);
+        if($category==='equipment'&&!in_array($item['category'],['distribution','backhaul','access','power','cpe','router','other'],true))respond(['error'=>'Invalid equipment category'],422);
+        if($category==='customers'){
+          $hs=$item['highsite_id']??'';$sector=$item['sector_id']??'';
+          if($sector!==''&&$hs==='')respond(['error'=>'Select a highsite before choosing a sector'],422);
+          if($hs!==''){$sites=locked('highsites',fn($r)=>$r);if(!array_filter($sites,fn($r)=>($r['id']??'')===$hs))respond(['error'=>'Highsite does not exist'],422);}
+          if($sector!==''){$sectors=locked('sectors',fn($r)=>$r);if(!array_filter($sectors,fn($r)=>($r['id']??'')===$sector&&($r['highsite_id']??'')===$hs))respond(['error'=>'Sector does not belong to selected highsite'],422);}
+        }
+        if($category==='sectors'&&($item['highsite_id']??'')==='')respond(['error'=>'Sector requires a highsite'],422);
+        if($category==='equipment'){
+          $hs=$item['highsite_id']??'';$customer=$item['customer_id']??'';
+          if($hs===''&&$customer==='')respond(['error'=>'Assign equipment to a highsite or customer'],422);
+          if($hs!==''&&$customer!=='')respond(['error'=>'Equipment cannot belong to a highsite and customer simultaneously'],422);
+          if($customer!==''){$customers=locked('customers',fn($r)=>$r);if(!array_filter($customers,fn($r)=>($r['id']??'')===$customer))respond(['error'=>'Customer does not exist'],422);}
+          if($hs!==''){$sites=locked('highsites',fn($r)=>$r);if(!array_filter($sites,fn($r)=>($r['id']??'')===$hs))respond(['error'=>'Highsite does not exist'],422);}
+        }
         if($category==='staff'){
           if(($_SESSION['role']??'')!=='admin')respond(['error'=>'Admin only'],403);
           if($method==='PUT')respond(['error'=>'Staff updates not yet supported'],405);
