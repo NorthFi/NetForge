@@ -70,7 +70,7 @@ function billingProposal(string $period,array $invoices): array {
     $services=locked('services',fn($r)=>$r);
     $packages=locked('packages',fn($r)=>$r);
     $byCustomer=[];foreach($customers as $c)$byCustomer[$c['id']]=$c;
-    $byPackage=[];foreach($packages as $p)if(isset($p['name']))$byPackage[mb_strtolower(trim((string)$p['name']))]=$p;
+    $byPackage=[];foreach($packages as $p)if(isset($p['name']))$byPackage[strtolower(trim((string)$p['name']))]=$p;
     $existing=[];
     foreach($invoices as $invoice)if(($invoice['billing_period']??'')===$period&&($invoice['source_service_id']??'')!=='')$existing[$invoice['source_service_id']]=true;
     $ready=[];$skipped=[];$already=[];
@@ -82,7 +82,7 @@ function billingProposal(string $period,array $invoices): array {
             $skipped[]=['service_id'=>$id,'service'=>$service['name']??'','reason'=>'Missing or inactive customer'];continue;
         }
         $packageName=trim((string)($service['package']??''));
-        $package=$byPackage[mb_strtolower($packageName)]??null;
+        $package=$byPackage[strtolower($packageName)]??null;
         $fee=trim((string)($service['monthly_fee']??''));
         if($fee==='')$fee=trim((string)($package['price']??''));
         $cents=amountCents($fee);
@@ -139,6 +139,33 @@ try {
     if (empty($_SESSION['user'])) respond(['error'=>'Authentication required'],401);
     if ($method==='POST' && $action==='logout') { csrf(); $_SESSION=[]; session_destroy(); respond(['ok'=>true]); }
 
+
+    if($action==='stock_adjust'&&$method==='POST'){
+        if(!in_array($_SESSION['role']??'',['admin','dispatcher'],true))respond(['error'=>'Stock adjustments require admin or dispatcher'],403);
+        csrf();$b=body();$id=(string)($b['id']??'');$revision=(int)($b['revision']??0);
+        $delta=(string)($b['delta']??'');$reason=trim((string)($b['reason']??''));$key=(string)($b['request_id']??'');
+        if(!preg_match('/^[a-f0-9]{32}$/',$id)||!preg_match('/^-?(?:0|[1-9]\d{0,5})$/',$delta)||strlen($reason)<5||strlen($reason)>500||!preg_match('/^[a-f0-9]{32}$/',$key))
+          respond(['error'=>'Valid inventory ID, integer quantity, reason (5–500 chars), and request ID required'],422);
+        if((int)$delta===0)respond(['error'=>'Adjustment cannot be zero'],422);
+        $result=locked('inventory',function($rows,$path)use($id,$revision,$delta,$reason,$key){
+            foreach($rows as &$item){
+                if(($item['id']??'')!==$id)continue;
+                foreach(($item['movements']??[]) as $m)if(($m['request_id']??'')===$key)
+                    return ['id'=>$id,'quantity'=>$item['quantity'],'revision'=>$item['revision']??1,'duplicate'=>true];
+                if((int)($item['revision']??1)!==$revision)respond(['error'=>'Stock was changed. Refresh and retry'],409);
+                $current=(int)($item['quantity']??0);$next=$current+(int)$delta;
+                if($next<0||$next>999999999)respond(['error'=>'Stock quantity must remain 0–999,999,999'],422);
+                $item['quantity']=(string)$next;$item['revision']=$revision+1;$item['updated_at']=gmdate('c');
+                $item['movements'][]=['request_id'=>$key,'time'=>gmdate('c'),'user'=>$_SESSION['username'],'delta'=>(int)$delta,'quantity'=>$next,'reason'=>$reason];
+                // Movement records must not be silently discarded; force migration if >10000.
+                if(count($item['movements'])>10000)respond(['error'=>'Stock history limit reached; archive before further adjustments'],507);
+                savejson($path,$rows);return ['id'=>$id,'quantity'=>$next,'revision'=>$item['revision'],'duplicate'=>false];
+            }
+            respond(['error'=>'Inventory item not found'],404);
+        });
+        audit('stock_adjust','inventory',$id);
+        respond($result);
+    }
     // Draft monthly billing runs are admin-only by design: they create financial records.
     if($action==='billing_preview'&&$method==='GET'){
         if(!in_array($_SESSION['role']??'',['admin','dispatcher'],true))respond(['error'=>'Finance access requires admin or dispatcher'],403);
@@ -171,7 +198,7 @@ try {
         audit('billing_generate','invoices',$period);
         respond($result,201);
     }
-    $allowed=['customers','highsites','sectors','equipment','backhauls','scripts','jobs','tickets','branches','technicians','packages','staff','outages','maintenance','inventory','leads','changes','ipam','activities','services','invoices','payments','surveys','workorders','link_checks'];
+    $allowed=['customers','highsites','sectors','equipment','backhauls','scripts','jobs','tickets','branches','technicians','packages','staff','outages','maintenance','inventory','leads','changes','ipam','activities','services','invoices','payments','surveys','workorders','link_checks','ticket_worklogs','todos','usage_records'];
     $category=(string)($_GET['category']??'');
     if (!in_array($category,$allowed,true)) respond(['error'=>'Unknown category'],404);
     if ($category==='staff' && ($_SESSION['role']??'')!=='admin') respond(['error'=>'Admin only'],403);
@@ -208,6 +235,9 @@ try {
           'surveys'=>['name','customer_id','lead_id','branch_id','highsite_id','latitude','longitude','azimuth','distance_km','fresnel_clearance','los_status','status','notes'],
           'workorders'=>['name','ticket_id','customer_id','highsite_id','technician_id','branch_id','scheduled_date','status','checklist','materials','completion_notes'],
           'link_checks'=>['name','customer_id','sector_id','rssi_dbm','snr_db','ccq','tx_mbps','rx_mbps','captured_at','notes'],
+          'ticket_worklogs'=>['name','ticket_id','technician_id','minutes','work_date','description','performed_by'],
+          'todos'=>['name','customer_id','ticket_id','due_date','assigned_to','status','description'],
+          'usage_records'=>['name','service_id','customer_id','period','download_gb','upload_gb','cap_gb','source','notes'],
         ];
         $item=[];
         foreach(($fields[$category]??['name','description']) as $field){
@@ -297,6 +327,34 @@ try {
           if(!is_numeric($az)||!is_finite((float)$az)||(float)$az<0||(float)$az>=360)
             respond(['error'=>'Azimuth must be in the range 0 to less than 360 degrees'],422);
         }
+
+        if($category==='ticket_worklogs'){
+            $id=$item['ticket_id']??'';
+            $tickets=locked('tickets',fn($r)=>$r);
+            if($id===''||!array_filter($tickets,fn($t)=>($t['id']??'')===$id))respond(['error'=>'Select an existing ticket for the work log'],422);
+            $minutes=(string)($item['minutes']??'');
+            if(!ctype_digit($minutes)||(int)$minutes<1||(int)$minutes>1440)
+                respond(['error'=>'Time worked must be 1–1440 minutes'],422);
+            if($item['work_date']==='')$item['work_date']=gmdate('Y-m-d');
+            if(!preg_match('/^\d{4}-\d{2}-\d{2}$/',$item['work_date']))respond(['error'=>'Invalid work date'],422);
+            $item['performed_by']=$_SESSION['username'];
+        }
+        if($category==='todos'){
+            if(!in_array($item['status']??'',['open','done'],true))respond(['error'=>'Invalid task status'],422);
+            if($item['customer_id']===''&&$item['ticket_id']==='')respond(['error'=>'Assign a customer or ticket'],422);
+        }
+        if($category==='usage_records'){
+            if(!preg_match('/^20\d{2}-(0[1-9]|1[0-2])$/',$item['period']??''))
+                respond(['error'=>'Usage period must be YYYY-MM'],422);
+            foreach(['download_gb','upload_gb','cap_gb'] as $f){
+                $v=trim((string)($item[$f]??''));
+                if($v!==''&&(!is_numeric($v)||!is_finite((float)$v)||(float)$v<0||(float)$v>100000000))
+                    respond(['error'=>"$f must be a finite nonnegative number"],422);
+            }
+            $service=locked('services',fn($r)=>array_values(array_filter($r,fn($x)=>($x['id']??'')===($item['service_id']??''))));
+            if(count($service)!==1||($service[0]['customer_id']??'')!==($item['customer_id']??''))
+                respond(['error'=>'Select an existing service belonging to the chosen customer'],422);
+        }
         if($category==='staff'){
           if(($_SESSION['role']??'')!=='admin')respond(['error'=>'Admin only'],403);
           if($method==='PUT')respond(['error'=>'Staff updates not yet supported'],405);
@@ -312,6 +370,11 @@ try {
           $item['id']=$id;$item['updated_at']=gmdate('c');
           $saved=locked($category,function($rows,$path)use($item,$id,$expectedRevision,$category){$found=false;foreach($rows as &$row){if(($row['id']??'')===$id){
               if((int)($row['revision']??1)!==$expectedRevision)respond(['error'=>'This record has changed since it was opened. Refresh and try again.'],409);
+              if($category==='inventory'){
+                if((string)($row['quantity']??'')!==(string)($item['quantity']??''))
+                    respond(['error'=>'Use Adjust stock to change inventory quantities'],409);
+                $item['movements']=$row['movements']??[];
+              }
               if($category==='invoices'&&($row['source_service_id']??'')!=='')
                 respond(['error'=>'Generated billing records cannot be manually overwritten.'],409);
               if($category==='sectors'&&($row['highsite_id']??'')!==($item['highsite_id']??'')){
@@ -340,13 +403,15 @@ try {
         $references=[
           'highsites'=>[['sectors','highsite_id'],['customers','highsite_id'],['equipment','highsite_id'],['backhauls','highsite_id'],['backhauls','remote_highsite_id'],['tickets','highsite_id'],['services','highsite_id'],['surveys','highsite_id'],['workorders','highsite_id'],['outages','highsite_id'],['maintenance','highsite_id'],['changes','highsite_id'],['ipam','highsite_id']],
           'sectors'=>[['customers','sector_id'],['services','sector_id'],['link_checks','sector_id']],
-          'customers'=>[['tickets','customer_id'],['equipment','customer_id'],['activities','customer_id'],['services','customer_id'],['invoices','customer_id'],['payments','customer_id'],['surveys','customer_id'],['workorders','customer_id'],['link_checks','customer_id'],['ipam','customer_id']],
+          'customers'=>[['todos','customer_id'],['usage_records','customer_id'],['tickets','customer_id'],['equipment','customer_id'],['activities','customer_id'],['services','customer_id'],['invoices','customer_id'],['payments','customer_id'],['surveys','customer_id'],['workorders','customer_id'],['link_checks','customer_id'],['ipam','customer_id']],
           'branches'=>[['customers','branch_id'],['highsites','branch_id'],['technicians','branch_id'],['tickets','branch_id'],['surveys','branch_id'],['invoices','branch_id'],['workorders','branch_id'],['inventory','branch_id'],['leads','branch_id'],['ipam','branch_id'],['outages','branch_id'],['changes','branch_id'],['maintenance','branch_id']],
           'technicians'=>[['tickets','technician_id'],['workorders','technician_id'],['maintenance','technician_id'],['changes','technician_id']],
           'equipment'=>[['maintenance','equipment_id']],
           'invoices'=>[['payments','invoice_id']],
-          'tickets'=>[['activities','ticket_id'],['workorders','ticket_id']],
-          'leads'=>[['surveys','lead_id']],
+                    'leads'=>[['surveys','lead_id']],
+          'services'=>[['usage_records','service_id'],['invoices','source_service_id']],
+          'tickets'=>[['activities','ticket_id'],['workorders','ticket_id'],['ticket_worklogs','ticket_id'],['todos','ticket_id']],
+
         ];
         foreach(($references[$category]??[]) as [$collection,$field]){
           $used=locked($collection,fn($rows)=>count(array_filter($rows,fn($row)=>($row[$field]??'')===$id)));
