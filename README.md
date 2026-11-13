@@ -1,31 +1,39 @@
 # root/README.md
-# NetForge — ISP Management Platform
+# NetForge — ISP Operations Manager
 
-Initial functional release for Afrihost cPanel without SQL. Static browser UI + PHP API + private JSON collections.
+NetForge is a cPanel-compatible, file-backed ISP management application.
 
-## Deploy
-1. Upload `index.html`, `.htaccess`, and `api/index.php` to `public_html/netforge/`.
-2. Confirm HTTPS and PHP 8.0+ with JSON and sessions enabled.
-3. PHP must be permitted to create `netforge-private` in the cPanel account home directory, outside `public_html`. If not, ask hosting support for writable private storage. The application fails closed if private storage cannot be created.
-4. Open `https://northfi.co.za/netforge/` and create the first administrator account with a strong unique password.
-5. Verify `https://northfi.co.za/netforge/api/index.php?action=status` responds with JSON.
-6. Export records regularly and back up the private directory securely.
+## Current modules
+- Customers: account details, names, addresses, packages, branches, sector associations, CPE management details and location links.
+- Tickets: customer, highsite, VoIP and other service tickets; priority, status, notes, call logs, assignment and scheduling.
+- Planner: monthly day-based calendar, drag-and-drop tickets, branch filters and technician assignments.
+- Highsites: site numbers, locations, branch assignment, equipment grouped into distribution, backhaul, access and power.
+- Scripts: script library (text storage only; no execution).
+- Settings: branches, technicians, login staff, packages and sectors.
 
-## Included
-- Admin setup, login, logout, secure session cookie and CSRF checks.
-- Dashboard with record counts.
-- Customers, highsites, sectors, equipment, backhauls, script metadata, and job listings.
-- Create/list/delete records; highsite and sector associations; CSV export.
-- Private JSON storage with exclusive locks and atomic file replacement.
-- Audit records for creates/deletes.
+## Deploy to Afrihost cPanel
+1. Copy `index.html`, `.htaccess`, and `api/index.php` into `public_html/netforge/`.
+2. Ensure HTTPS and PHP 8.0+ with sessions and JSON.
+3. The PHP API must be able to create `netforge-private` outside `public_html`; if it cannot, hosting permissions must be fixed. It deliberately fails closed instead of storing sensitive data publicly.
+4. Browse to `https://northfi.co.za/netforge/` and create the initial administrator.
+5. Back up `netforge-private` regularly and test restoration.
 
-## Limitations and safety
-- This is an **initial MVP**, not a production-hardened multi-user ISP management system.
-- Single administrator only; no RBAC, login rate limiting, device monitoring, billing, scheduled jobs, script execution, updates, or referential-integrity enforcement yet.
-- Deleting a parent record can leave orphaned references; reconcile these before use.
-- Script records are metadata only. The web application never executes device commands.
-- Do not use on a public site with sensitive real customer information until security review, rate limiting, backups, and access policies are implemented.
-- JSON storage is appropriate for small deployments; migrate to PostgreSQL on a self-hosted server as usage grows.
+## Security and feature limitations
+This release is an **MVP and must not be considered production-hardened**.
+- No rate limiting or lockout on login; restrict exposure before using real customer data.
+- Staff roles: admin, dispatcher, technician, viewer. Only admin can manage staff and delete records; viewer cannot edit. Fine-grained authorization is not yet implemented.
+- Equipment access: browser URLs open for HTTP(S). SSH and Winbox show connection instructions only. Browser launching of native tools is not reliable.
+- **Device passwords are deliberately not collected or stored.** A credential vault and authenticated agent are required first.
+- Scripts are stored as text; there is no execution engine, device connectivity or remote job scheduling yet.
+- There is no referential integrity enforcement; deleting a highsite, sector or customer may leave dangling references.
+- Staff passwords cannot be reset in the UI yet.
+- Existing initial administrator remains in a separate auth JSON file; additional staff are stored in staff.json.
+- JSON collections are individually locked and atomically replaced, but multi-collection updates are not transactional.
+- No built-in backups, import pipeline, or automated monitoring.
+- CSV export from the earlier version is not included in the redesigned interface yet.
 
-## Repository
-The `netforge-isp-manager` branch is the new application. The `Published` branch remains untouched.
+## Branches
+`netforge-isp-manager` is the development branch. `Published` is unchanged.
+
+## Future architecture
+When moving to self-hosted infrastructure, introduce PostgreSQL and a dedicated Python automation worker without changing the frontend's functional modules.
