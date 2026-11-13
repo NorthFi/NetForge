@@ -13,9 +13,9 @@ assert.ok(!/<script\s*>/i.test(html), 'Do not use inline JavaScript');
 new Script(js, { filename: 'assets/netforge.js' });
 
 const views = ['dashboard', 'wisp', 'customers', 'tickets', 'planner', 'highsites',
-  'sectors', 'backhauls', 'finance', 'surveys', 'workorders', 'inventory', 'scripts', 'settings'];
+  'sectors', 'backhauls', 'finance', 'billing', 'debtors', 'reports', 'usage', 'surveys', 'workorders', 'inventory', 'scripts', 'settings'];
 for (const view of views) assert.ok(js.includes("'" + view + "'"), 'Missing navigation: ' + view);
-const features = ['customer360', 'site360', 'finance', 'wisp', 'schedule', 'showGlobalSearch', 'exportCollection'];
+const features = ['customer360', 'site360', 'ticket360', 'finance', 'billingCycles', 'debtors', 'reports', 'inventoryManager', 'inventoryDetail', 'wisp', 'schedule', 'showGlobalSearch', 'exportCollection'];
 for (const name of features) assert.ok(js.includes('function ' + name + '('), 'Missing function: ' + name);
 for (const selector of ['.shell', '.nf-nav-section', '.nf-status', '.card'])
   assert.ok(css.includes(selector), 'Missing selector: ' + selector);

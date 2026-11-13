@@ -27,14 +27,33 @@ The private storage directory must be outside `public_html`. The API fails close
 ## Capabilities
 
 - Dashboard: customer totals, ticket queue, overdue work, site and stock alerts, and planned sector capacity.
-- CRM: customer 360° profiles, leads, communication history, equipment, tickets and service records.
-- Finance: manual invoice and payment registers, invoice allocations summary, package catalogue and CSV exports. **Not automatic billing or accounting.**
+- CRM: customer 360° profiles, leads, communication history, linked services, tickets, assigned follow-up tasks, monthly manually entered usage, and customer equipment.
+- Finance: manual invoice/payment registers; idempotent **preview-and-confirm monthly draft invoice generation** for active, priced services; controlled issue/void transitions; debtor ageing and manual reminder drafts; package catalogue; MRR and ARPU estimates; CSV exports. No automated payment capture or invoice delivery.
 - Networking: highsite workspaces (Overview / Distribution / Backhaul / Access / Power / Customers / Outages), access sectors, backhaul records, IP address register, incident tracking and infrastructure equipment.
 - WISP intelligence: subscriber distribution, manual RF health observations, sector capacity thresholds, frequency reuse warnings, outage impact preview, GPS-based topology drawing, link-budget estimate, midpoint first Fresnel-zone calculator and midpoint Earth-curvature bulge.
-- Field operations: branch-aware technician scheduling, drag-and-drop ticket/work-order assignments, work orders, RF surveys, maintenance and on-call metadata.
-- Inventory: stock levels, reorder thresholds, suppliers and deployed customer/site equipment.
+- Field operations: branch-aware technician scheduling, drag-and-drop ticket/work-order assignments, ticket worklogs with minutes and helpdesk history, work orders, RF surveys, maintenance and on-call metadata.
+- Inventory: stock levels, reorder thresholds, suppliers and deployed customer/site equipment; server-side stock adjustment with optimistic revisions, idempotency IDs, reason logs, and prevention of negative stock.
 - Scripts: editable library of script text and approval/risk metadata, **no remote execution**.
 - Administration: branch management, staff login accounts, technicians, package plans, sectors and settings.
+
+## Monthly billing and support workflows
+
+1. In **Administration → Packages**, create a package with a positive `price` (monthly ZAR).
+2. Under **Finance → Services** (or a customer's **Services** tab), assign an **active** service to an **active** customer and set its package to the package name. Optionally enter `monthly_fee` to override package price for that service.
+3. Give the customer a `billing_day` between 1 and 28 in the customer editor. Missing/invalid values default to day 1 of the selected billing month.
+4. Open **Recurring billing**, select a month, and run **Preview**. Confirm eligible, already billed and skipped services. The same service is charged only once for a given month.
+5. An **administrator** may generate draft invoices after explicitly confirming the preview. Repeated calls cannot silently create duplicates. Drafts are not payable or emailed.
+6. Issue individual drafts when reviewed. Only issued invoices can receive allocated payments. An invoice with payments cannot be voided. Generated invoice snapshots cannot be directly edited or deleted.
+7. Use **Debtors** for ageing and copyable reminder text. Sending reminders is entirely manual; no messaging integration is active.
+8. Use **Reports** for estimated MRR, ARPU, support hours and usage summaries. These values are derived from manually stored source data, not live equipment telemetry.
+
+**Billing restrictions:** Prices must be numeric, positive, and have at most two decimal places; there is no VAT calculation, proration, prepaid balance, credit-note/refund ledger, advance credit, payment gateway, or compliant tax invoice/PDF generation. Active services with missing prices are skipped and reported. Billing creation is a manual operator action, not a scheduled background process. Never use this for legal/tax invoices before implementing the jurisdiction-specific requirements.
+
+**Ticketing:** Open a ticket for its customer, highsite, VoIP or other service, log technician minutes in its worklog, add calls and linked work orders, and track customer follow-up tasks. Time logging is manual; SLA targets are not automatically enforced.
+
+**Stock:** Create a stock item, then use its **Adjust stock** action with a signed quantity change and mandatory reason. Ordinary inventory edits cannot modify existing stock quantities; the adjustment action writes an audit movement entry under the item's JSON record. Initial inventory quantities can be entered when creating a new item, so confirm opening stock during initial setup.
+
+**Data usage:** Monthly upload/download GB records are manually entered; no RADIUS accounting import, data cap enforcement, throttling or automated collection occurs.
 
 ## Deployment (Afrihost cPanel)
 
@@ -49,7 +68,7 @@ The development branch `netforge-isp-manager` must be tested on a staging path b
 
 ## Automated checks
 
-GitHub Actions runs a PHP syntax check, standalone JS syntax/screen verification and an authenticated API smoke test for admin bootstrap, highsite/sector/customer relationships, equipment, communications, service records, invoices/payments, RF observations, surveys, work orders, IPAM duplicate protection, delete guards, and optimistic concurrency.
+GitHub Actions runs PHP syntax, JavaScript syntax/screen verification and authenticated API integration smoke tests covering administrator bootstrap; site/sector/customer assignment; equipment; communications; service records; recurring billing preview, draft issuance and duplicate prevention; payment safeguards; RF observations, surveys and work orders; helpdesk time logs, customer tasks and manual usage; inventory stock movements, stale edits, duplicate IPAM, deletion restrictions, and optimistic concurrency.
 
 Workflow: `.github/workflows/netforge-ci.yml`.
 
@@ -57,7 +76,7 @@ Workflow: `.github/workflows/netforge-ci.yml`.
 
 This remains a staged MVP, not a claim of feature parity with Splynx and not an audited production billing or monitoring system.
 
-- No live SNMP, RouterOS API, RADIUS, PPPoE provisioning, TR-069 ACS, WhatsApp messaging, payment gateway, payment reconciliation, remote script execution, or network alarms yet.
+- No live SNMP, RouterOS API, RADIUS, PPPoE provisioning, TR-069 ACS, WhatsApp messaging, payment gateway, automated payment reconciliation, tax invoice generation, remote script execution, or network alarms yet.
 - RF calculations assume free-space propagation and configurable effective Earth radius. They do not model terrain, trees, buildings, multipath, or interference. All RF snapshots and site statuses are manually entered.
 - The GPS topology connects configured highsites visually; it is **not** a live bandwidth or availability map.
 - Session cookies are Secure/HttpOnly/SameSite. CSRF checks, initial RBAC and per-IP-and-user login throttling exist. Granular per-branch permissions, MFA and comprehensive penetration testing are still required.
