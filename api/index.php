@@ -56,6 +56,58 @@ function loginThrottle(string $username,string $mode): bool {
     });
 }
 function audit(string $action, string $entity, string $id): void { locked('audit',function($rows,$path)use($action,$entity,$id){ $rows[]=['time'=>gmdate('c'),'user'=>$_SESSION['username']??'unknown','action'=>$action,'entity'=>$entity,'id'=>$id]; if(count($rows)>10000) $rows=array_slice($rows,-10000); savejson($path,$rows); }); }
+// Annualized-fee assumptions are intentionally excluded. One invoice is generated for
+// each active service with an explicit monthly fee or a matching priced package.
+// Prices are handled as integer cents and the result is stable across retries.
+function amountCents(string $value): ?int {
+    if(!preg_match('/^(?:0|[1-9][0-9]{0,8})(?:\.[0-9]{1,2})?$/',$value))return null;
+    $parts=explode('.',$value,2);
+    return (int)$parts[0]*100+(int)str_pad($parts[1]??'',2,'0');
+}
+function billingProposal(string $period,array $invoices): array {
+    if(!preg_match('/^20[0-9]{2}-(0[1-9]|1[0-2])$/',$period))respond(['error'=>'Use a billing period YYYY-MM between 2000 and 2099'],422);
+    $customers=locked('customers',fn($r)=>$r);
+    $services=locked('services',fn($r)=>$r);
+    $packages=locked('packages',fn($r)=>$r);
+    $byCustomer=[];foreach($customers as $c)$byCustomer[$c['id']]=$c;
+    $byPackage=[];foreach($packages as $p)if(isset($p['name']))$byPackage[mb_strtolower(trim((string)$p['name']))]=$p;
+    $existing=[];
+    foreach($invoices as $invoice)if(($invoice['billing_period']??'')===$period&&($invoice['source_service_id']??'')!=='')$existing[$invoice['source_service_id']]=true;
+    $ready=[];$skipped=[];$already=[];
+    foreach($services as $service){
+        if(($service['status']??'')!=='active')continue;
+        $id=(string)($service['id']??'');$customer=$byCustomer[$service['customer_id']??'']??null;
+        $customerName=$customer['account']??'';
+        if(!$customer||in_array($customer['account_status']??'',['cancelled','suspended'],true)){
+            $skipped[]=['service_id'=>$id,'service'=>$service['name']??'','reason'=>'Missing or inactive customer'];continue;
+        }
+        $packageName=trim((string)($service['package']??''));
+        $package=$byPackage[mb_strtolower($packageName)]??null;
+        $fee=trim((string)($service['monthly_fee']??''));
+        if($fee==='')$fee=trim((string)($package['price']??''));
+        $cents=amountCents($fee);
+        if($cents===null||$cents===0){
+            $skipped[]=['service_id'=>$id,'service'=>$service['name']??'','customer'=>$customerName,'reason'=>'Missing or invalid monthly service/package price'];continue;
+        }
+        $billDay=(int)($customer['billing_day']??0);
+        if($billDay<1||$billDay>28)$billDay=1;
+        $row=[
+            'service_id'=>$id,'service'=>$service['name']??'',
+            'customer_id'=>$customer['id'],'customer'=>$customerName,
+            'branch_id'=>$customer['branch_id']??'',
+            'package'=>$packageName,'amount'=>number_format($cents/100,2,'.',''),
+            'due_date'=>sprintf('%s-%02d',$period,$billDay)
+        ];
+        if(isset($existing[$id]))$already[]=$row;else $ready[]=$row;
+    }
+    usort($ready,fn($a,$b)=>strcmp($a['service_id'],$b['service_id']));
+    usort($already,fn($a,$b)=>strcmp($a['service_id'],$b['service_id']));
+    $sum=0;foreach($ready as $row)$sum+=(int)round((float)$row['amount']*100);
+    $token=hash('sha256',json_encode([$period,$ready,$already,$skipped],JSON_THROW_ON_ERROR));
+    return ['period'=>$period,'ready'=>$ready,'existing'=>$already,'skipped'=>$skipped,'ready_total'=>number_format($sum/100,2,'.',''),'token'=>$token,
+        'warning'=>'Draft invoices are not sent automatically. No VAT, pro-rating, payment gateway or invoice PDF is calculated.'];
+}
+
 try {
     $method=$_SERVER['REQUEST_METHOD']??'GET';
     $action=$_GET['action']??'';
@@ -86,6 +138,39 @@ try {
     }
     if (empty($_SESSION['user'])) respond(['error'=>'Authentication required'],401);
     if ($method==='POST' && $action==='logout') { csrf(); $_SESSION=[]; session_destroy(); respond(['ok'=>true]); }
+
+    // Draft monthly billing runs are admin-only by design: they create financial records.
+    if($action==='billing_preview'&&$method==='GET'){
+        if(!in_array($_SESSION['role']??'',['admin','dispatcher'],true))respond(['error'=>'Finance access requires admin or dispatcher'],403);
+        $period=(string)($_GET['period']??'');
+        respond(locked('invoices',fn($rows)=>billingProposal($period,$rows)));
+    }
+    if($action==='billing_generate'&&$method==='POST'){
+        if(($_SESSION['role']??'')!=='admin')respond(['error'=>'Only an administrator can generate invoice drafts'],403);
+        csrf();$b=body();$period=(string)($b['period']??'');$expected=(string)($b['token']??'');
+        if(!preg_match('/^[a-f0-9]{64}$/',$expected))respond(['error'=>'Valid preview token required'],422);
+        $result=locked('invoices',function($rows,$path)use($period,$expected){
+            $proposal=billingProposal($period,$rows);
+            if(!hash_equals($proposal['token'],$expected))respond(['error'=>'Billing data changed. Refresh preview and review again.'],409);
+            if(count($proposal['ready'])>500)respond(['error'=>'Limit: 500 draft invoices per billing run'],413);
+            $created=[];$now=gmdate('c');
+            foreach($proposal['ready'] as $entry){
+                $id=bin2hex(random_bytes(16));$created[]=[
+                    'id'=>$id,'name'=>'Recurring service: '.$entry['service'],'number'=>'NF-'.str_replace('-','',$period).'-'.substr($entry['service_id'],0,16),
+                    'customer_id'=>$entry['customer_id'],'branch_id'=>$entry['branch_id'],
+                    'invoice_date'=>$period.'-01','due_date'=>$entry['due_date'],
+                    'amount'=>$entry['amount'],'status'=>'draft',
+                    'description'=>'Monthly service '.$entry['service'].($entry['package']!==''?' ('.$entry['package'].')':''),
+                    'billing_period'=>$period,'source_service_id'=>$entry['service_id'],
+                    'created_at'=>$now,'updated_at'=>$now,'revision'=>1
+                ];
+            }
+            if($created)savejson($path,array_merge($rows,$created));
+            return ['created'=>count($created),'existing'=>count($proposal['existing']),'skipped'=>count($proposal['skipped']),'total'=>$proposal['ready_total'],'period'=>$period,'ids'=>array_column($created,'id')];
+        });
+        audit('billing_generate','invoices',$period);
+        respond($result,201);
+    }
     $allowed=['customers','highsites','sectors','equipment','backhauls','scripts','jobs','tickets','branches','technicians','packages','staff','outages','maintenance','inventory','leads','changes','ipam','activities','services','invoices','payments','surveys','workorders','link_checks'];
     $category=(string)($_GET['category']??'');
     if (!in_array($category,$allowed,true)) respond(['error'=>'Unknown category'],404);
@@ -117,7 +202,7 @@ try {
           'changes'=>['name','change_type','risk','status','highsite_id','technician_id','planned_date','rollback_plan','description'],
           'ipam'=>['name','address','vlan','branch_id','highsite_id','customer_id','purpose','status','notes'],
           'activities'=>['name','customer_id','ticket_id','type','channel','description','occurred_at','performed_by'],
-          'services'=>['name','customer_id','service_type','status','package','highsite_id','sector_id','vlan','ip','pppoe_username','activated_date','notes'],
+          'services'=>['name','customer_id','service_type','status','package','monthly_fee','highsite_id','sector_id','vlan','ip','pppoe_username','activated_date','notes'],
           'invoices'=>['name','number','customer_id','branch_id','invoice_date','due_date','amount','status','description'],
           'payments'=>['name','reference','customer_id','invoice_id','payment_date','amount','method','notes'],
           'surveys'=>['name','customer_id','lead_id','branch_id','highsite_id','latitude','longitude','azimuth','distance_km','fresnel_clearance','los_status','status','notes'],
@@ -227,6 +312,8 @@ try {
           $item['id']=$id;$item['updated_at']=gmdate('c');
           $saved=locked($category,function($rows,$path)use($item,$id,$expectedRevision,$category){$found=false;foreach($rows as &$row){if(($row['id']??'')===$id){
               if((int)($row['revision']??1)!==$expectedRevision)respond(['error'=>'This record has changed since it was opened. Refresh and try again.'],409);
+              if($category==='invoices'&&($row['source_service_id']??'')!=='')
+                respond(['error'=>'Generated billing records cannot be manually overwritten.'],409);
               if($category==='sectors'&&($row['highsite_id']??'')!==($item['highsite_id']??'')){
                  $assigned=locked('customers',fn($r)=>count(array_filter($r,fn($x)=>($x['sector_id']??'')===$id)));
                  if($assigned)respond(['error'=>'Cannot move sector to another highsite while subscribers are assigned'],409);
@@ -264,6 +351,10 @@ try {
         foreach(($references[$category]??[]) as [$collection,$field]){
           $used=locked($collection,fn($rows)=>count(array_filter($rows,fn($row)=>($row[$field]??'')===$id)));
           if($used>0)respond(['error'=>"Cannot delete: $used related record(s) in $collection. Reassign them first."],409);
+        }
+        if($category==='invoices'){
+           $generated=locked('invoices',fn($rows)=>count(array_filter($rows,fn($r)=>($r['id']??'')===$id&&($r['source_service_id']??'')!=='')));
+           if($generated)respond(['error'=>'Generated invoice drafts cannot be deleted; retain them for audit'],409);
         }
         $deleted=locked($category,function($rows,$path)use($id){$next=array_values(array_filter($rows,fn($r)=>($r['id']??'')!==$id));if(count($next)===count($rows))return false;savejson($path,$next);return true;});
         if (!$deleted) respond(['error'=>'Not found'],404);
