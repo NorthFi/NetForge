@@ -287,7 +287,38 @@ function wisp(){
     let served=active.filter(c=>c.highsite_id===site.id).length,affected=outages.some(o=>o.highsite_id===site.id&&o.status!=='resolved');
     return '<div class="nf-statline"><div><b>'+esc(site.name)+'</b><div class="nf-detail-subtitle">'+esc(lookup('branches',site.branch_id))+'</div></div><div class="tools"><span class="nf-status '+(affected?'nf-bad':'nf-neutral')+'">'+served+' linked customers'+(affected?' · incident recorded':'')+'</span><button data-site="'+esc(site.id)+'">Open site</button></div></div>';
  }).join(''):'<p class="nf-empty">No highsites available.</p>';
+
  document.querySelectorAll('[data-site]').forEach(b=>b.onclick=()=>site360(b.dataset.site));
+ el.insertAdjacentHTML('beforeend','<div class="nf-grid-two section"><div class="card"><h3>RF link budget and Fresnel calculator</h3><p class="nf-detail-subtitle">Free-space estimate only; not a substitute for terrain, clutter or interference modelling.</p><div class="formgrid"><div><label>Distance (km)</label><input id="rf-distance" type="number" min="0.001" step="0.1" value="5"></div><div><label>Frequency (GHz)</label><input id="rf-frequency" type="number" min="0.001" step="0.1" value="5.8"></div><div><label>TX power (dBm)</label><input id="rf-tx" type="number" step="1" value="20"></div><div><label>TX antenna gain (dBi)</label><input id="rf-txgain" type="number" step="1" value="20"></div><div><label>RX antenna gain (dBi)</label><input id="rf-rxgain" type="number" step="1" value="20"></div><div><label>Total cable/connector losses (dB)</label><input id="rf-loss" type="number" step="0.5" min="0" value="2"></div><div><label>Effective Earth k-factor</label><input id="rf-k" type="number" step="0.01" min="0.1" value="1.333"></div></div><div id="rf-results" class="nf-sidecard section" role="status"></div></div><div class="card"><h3>Coordinate-based backhaul topology</h3><p class="nf-detail-subtitle">Schematic only, positioned from entered highsite GPS coordinates. Click a site to view its records.</p><div id="wisp-topology"></div></div></div>');
+ const vals=['rf-distance','rf-frequency','rf-tx','rf-txgain','rf-rxgain','rf-loss','rf-k'];
+ const compute=()=>{
+    const [d,f,tx,gTx,gRx,loss,k]=vals.map(x=>Number(document.getElementById(x)?.value));
+    const output=document.querySelector('#rf-results');
+    if(!Number.isFinite(d)||!Number.isFinite(f)||!Number.isFinite(k)||d<=0||f<=0||k<=0||d>500||f>120||!Number.isFinite(tx)||!Number.isFinite(gTx)||!Number.isFinite(gRx)||!Number.isFinite(loss)||loss<0){
+       output.textContent='Enter valid link parameters; distance must be 0–500 km and frequency 0–120 GHz.';return;
+    }
+    const fspl=92.45+20*Math.log10(d)+20*Math.log10(f);
+    const receive=tx+gTx+gRx-loss-fspl;
+    const firstZone=8.66*Math.sqrt(d/f);
+    const bulge=d*d/(51*k);
+    output.innerHTML=nfProperty('Free-space path loss',fspl.toFixed(1)+' dB')+nfProperty('Estimated received power',receive.toFixed(1)+' dBm')+nfProperty('First Fresnel zone radius at midpoint',firstZone.toFixed(2)+' m')+nfProperty('60% zone clearance radius',(firstZone*.6).toFixed(2)+' m')+nfProperty('Earth curvature bulge at midpoint',bulge.toFixed(2)+' m');
+ };
+ vals.forEach(x=>document.getElementById(x).addEventListener('input',compute));compute();
+ const withGPS=sites.filter(x=>x.latitude!==''&&x.longitude!==''&&Number.isFinite(Number(x.latitude))&&Number.isFinite(Number(x.longitude))&&Math.abs(Number(x.latitude))<=90&&Math.abs(Number(x.longitude))<=180);
+ const topology=document.querySelector('#wisp-topology');
+ if(!withGPS.length){topology.innerHTML='<p class="nf-empty">Enter GPS coordinates on highsite records to build the topology.</p>';}
+ else{
+   const lon=withGPS.map(x=>Number(x.longitude)),lat=withGPS.map(x=>Number(x.latitude));
+   const left=Math.min(...lon),right=Math.max(...lon),bottom=Math.min(...lat),top=Math.max(...lat);
+   const margin=45,width=860,height=320;
+   const pos=x=>({x:margin+(Number(x.longitude)-left)/Math.max(right-left,0.02)*(width-2*margin),y:height-margin-(Number(x.latitude)-bottom)/Math.max(top-bottom,0.02)*(height-2*margin)});
+   let svg='<svg role="img" aria-label="Schematic highsite positions and planned backhaul connections" viewBox="0 0 860 320" style="width:100%;height:auto;background:#fbfaff;border-radius:8px;border:1px solid #e8e7ef">';
+   for(const link of links){const source=withGPS.find(x=>x.id===link.highsite_id),target=withGPS.find(x=>x.id===link.remote_highsite_id);if(!source||!target)continue;let a=pos(source),b=pos(target);svg+='<line x1="'+a.x+'" y1="'+a.y+'" x2="'+b.x+'" y2="'+b.y+'" stroke="#9180d2" stroke-width="3" stroke-linecap="round"><title>'+esc(link.name)+'</title></line>';}
+   for(const site of withGPS){let p=pos(site),served=active.filter(c=>c.highsite_id===site.id).length;svg+='<circle data-topology-site="'+esc(site.id)+'" cx="'+p.x+'" cy="'+p.y+'" r="10" fill="#7852d7" stroke="white" stroke-width="3" style="cursor:pointer"><title>'+esc(site.name)+' ('+served+' customers)</title></circle><text x="'+(p.x+14)+'" y="'+(p.y-10)+'" fill="#3d3c56" font-size="13">'+esc(site.name.slice(0,22))+'</text>';}
+   svg+='</svg>';
+   topology.innerHTML=svg+'<p class="nf-detail-subtitle">'+withGPS.length+' GPS-enabled sites. Lines represent configured backhaul records, not measured network links.</p>';
+   topology.querySelectorAll('[data-topology-site]').forEach(x=>x.onclick=()=>site360(x.dataset.topologySite));
+ }
 }
 function nfRows(rows,fields,empty='No linked records.'){
  return rows.length?'<div class="card tablewrap"><table><thead><tr>'+fields.map(([k,l])=>'<th>'+esc(l)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr data-record="'+esc(r.id)+'">'+fields.map(([k])=>'<td>'+esc(resolvedValue(k,r))+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>':'<p class="nf-empty">'+esc(empty)+'</p>';
