@@ -42,6 +42,19 @@ function savejson(string $path, array $data): void {
 }
 function body(): array { $raw = file_get_contents('php://input'); if (strlen($raw)>65536) respond(['error'=>'Payload too large'],413); $value=json_decode($raw,true); if (!is_array($value)) respond(['error'=>'Invalid JSON body'],400); return $value; }
 function csrf(): void { if (!hash_equals((string)($_SESSION['csrf']??''),(string)($_SERVER['HTTP_X_CSRF_TOKEN']??''))) respond(['error'=>'Invalid CSRF token'],403); }
+// Per-IP-and-username throttling. Remote address is server-provided, never a forwarded client header.
+// This is deliberately file-backed so it runs on shared cPanel without SQL or Redis.
+function loginThrottle(string $username,string $mode): bool {
+    $key=hash('sha256', (string)($_SERVER['REMOTE_ADDR']??'unknown').'|'.strtolower($username));
+    return locked('login_attempts',function($rows,$path)use($key,$mode){
+        $now=time();
+        $rows=array_values(array_filter($rows,fn($x)=>is_array($x)&&isset($x['time'])&&((int)$x['time'])>($now-900)));
+        $count=count(array_filter($rows,fn($x)=>($x['key']??'')===$key));
+        if($mode==='failure'){$rows[]=['key'=>$key,'time'=>$now];if(count($rows)>20000)$rows=array_slice($rows,-20000);savejson($path,$rows);}
+        elseif($mode==='success'){$rows=array_values(array_filter($rows,fn($x)=>($x['key']??'')!==$key));savejson($path,$rows);}
+        return $count>=8;
+    });
+}
 function audit(string $action, string $entity, string $id): void { locked('audit',function($rows,$path)use($action,$entity,$id){ $rows[]=['time'=>gmdate('c'),'user'=>$_SESSION['username']??'unknown','action'=>$action,'entity'=>$entity,'id'=>$id]; if(count($rows)>10000) $rows=array_slice($rows,-10000); savejson($path,$rows); }); }
 try {
     $method=$_SERVER['REQUEST_METHOD']??'GET';
@@ -62,10 +75,12 @@ try {
         respond(['ok'=>true,'csrf'=>$_SESSION['csrf']],201);
     }
     if ($method==='POST' && $action==='login') {
-        $b=body(); $auth=json_decode((string)@file_get_contents(datafile('auth')),true);
+        $b=body(); $attemptUser=(string)($b['username']??'');
+        if(loginThrottle($attemptUser,'check')) respond(['error'=>'Too many login attempts. Try again later.'],429);
+        $auth=json_decode((string)@file_get_contents(datafile('auth')),true);
         $matched=is_array($auth)&&hash_equals($auth['username'],(string)($b['username']??''))&&password_verify((string)($b['password']??''),$auth['hash']);
         if(!$matched){$staff=locked('staff',fn($r)=>$r);foreach($staff as $member){if(hash_equals((string)($member['username']??''),(string)($b['username']??''))&&password_verify((string)($b['password']??''),(string)($member['password_hash']??''))){$matched=true;$auth=['username'=>$member['username'],'role'=>$member['role']??'viewer'];break;}}}
-        if(!$matched){usleep(350000);respond(['error'=>'Invalid credentials'],401);}
+        if(!$matched){loginThrottle($attemptUser,'failure');usleep(350000);respond(['error'=>'Invalid credentials'],401);}loginThrottle($attemptUser,'success');
         session_regenerate_id(true); $_SESSION['user']=true; $_SESSION['username']=$auth['username']; $_SESSION['role']=$auth['role']??'admin'; $_SESSION['csrf']=bin2hex(random_bytes(32));
         respond(['ok'=>true,'csrf'=>$_SESSION['csrf']]);
     }
@@ -175,12 +190,24 @@ try {
         }
         if($method==='PUT'){
           $id=(string)($b['id']??'');if(!preg_match('/^[a-f0-9]{32}$/',$id))respond(['error'=>'Invalid ID'],422);
+          $expectedRevision=(int)($b['revision']??1);
+          if($expectedRevision<1)respond(['error'=>'Invalid revision'],422);
           $item['id']=$id;$item['updated_at']=gmdate('c');
-          $saved=locked($category,function($rows,$path)use($item,$id){$found=false;foreach($rows as &$row){if(($row['id']??'')===$id){$item['created_at']=$row['created_at']??gmdate('c');$row=$item;$found=true;break;}}unset($row);if(!$found)respond(['error'=>'Not found'],404);savejson($path,$rows);return $item;});
+          $saved=locked($category,function($rows,$path)use($item,$id,$expectedRevision,$category){$found=false;foreach($rows as &$row){if(($row['id']??'')===$id){
+              if((int)($row['revision']??1)!==$expectedRevision)respond(['error'=>'This record has changed since it was opened. Refresh and try again.'],409);
+              if($category==='sectors'&&($row['highsite_id']??'')!==($item['highsite_id']??'')){
+                 $assigned=locked('customers',fn($r)=>count(array_filter($r,fn($x)=>($x['sector_id']??'')===$id)));
+                 if($assigned)respond(['error'=>'Cannot move sector to another highsite while subscribers are assigned'],409);
+              }
+              $item['revision']=$expectedRevision+1;
+              $item['created_at']=$row['created_at']??gmdate('c');$row=$item;$found=true;break;}}unset($row);if(!$found)respond(['error'=>'Not found'],404);savejson($path,$rows);return $item;});
           audit('update',$category,$id);respond($saved);
         }
-        $item['id']=bin2hex(random_bytes(16));$item['created_at']=gmdate('c');$item['updated_at']=$item['created_at'];
-        locked($category,function($rows,$path)use($item,$category){if($category==='staff'){foreach($rows as $r){if(strcasecmp($r['username']??'',$item['username'])===0)respond(['error'=>'Username exists'],409);}}$rows[]=$item;savejson($path,$rows);});
+        $item['id']=bin2hex(random_bytes(16));$item['created_at']=gmdate('c');$item['updated_at']=$item['created_at'];$item['revision']=1;
+        locked($category,function($rows,$path)use($item,$category){if($category==='staff'){foreach($rows as $r){if(strcasecmp($r['username']??'',$item['username'])===0)respond(['error'=>'Username exists'],409);}}if($category==='customers'&&($item['account']??'')!==''){
+         foreach($rows as $existing){if(strcasecmp((string)($existing['account']??''),$item['account'])===0)respond(['error'=>'Customer account name already exists'],409);}
+       }
+       $rows[]=$item;savejson($path,$rows);});
         audit('create',$category,$item['id']);
         if($category==='staff')unset($item['password_hash']);
         respond($item,201);
