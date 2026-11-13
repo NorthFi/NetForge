@@ -6,7 +6,7 @@ const root=document.querySelector('#root'),api='api/index.php';
 // Menu groups follow familiar ISP operations organization while keeping NetForge branding.
 const navigation=[
  {title:'OVERVIEW',items:[['dashboard','Dashboard','▦'],['wisp','WISP intelligence','◎']]},
- {title:'CRM',items:[['customers','Customers','◉'],['leads','Leads','◇'],['tickets','Tickets','▣'],['finance','Finance','≡'],['reports','Reports','▥']]},
+ {title:'CRM',items:[['customers','Customers','◉'],['leads','Leads','◇'],['tickets','Tickets','▣'],['finance','Finance','≡'],['billing','Recurring billing','↻'],['debtors','Debtors','≋'],['reports','Reports','▥']]},
  {title:'NETWORK',items:[['highsites','Highsites','△'],['sectors','Access sectors','◈'],['backhauls','Backhaul links','⇄'],['ipam','IP addresses','#'],['usage','Subscriber usage','◴'],['outages','Outages','!']]},
  {title:'FIELD OPERATIONS',items:[['planner','Scheduling','▦'],['workorders','Work orders','☷'],['surveys','RF surveys','⌖'],['maintenance','Maintenance','⚒']]},
  {title:'INVENTORY & SYSTEM',items:[['inventory','Inventory','▤'],['equipment','Deployed equipment','⬡'],['scripts','Scripts','⌘'],['settings','Administration','⚙']]}
@@ -94,6 +94,8 @@ function render(){
  else if(view==='inventory')inventoryManager();
  else if(view==='equipment')list('equipment',['name','type','ip','category','highsite_id','customer_id']);
  else if(view==='finance')finance();
+ else if(view==='billing')billingCycles();
+ else if(view==='debtors')debtors();
  else if(view==='scripts')scripts();
  else if(view==='planner')planner();
  else if(view==='settings')settings();
@@ -254,6 +256,98 @@ function finance(){
   workspaceTable(document.querySelector('#finance-body'),active,spec[active]);
  }
  draw();
+}
+
+const nfMoney=n=>new Intl.NumberFormat('en-ZA',{style:'currency',currency:'ZAR'}).format(Number(n)||0);
+function billingCycles(){
+ const el=document.querySelector('#content'),initial=dateKey(new Date()).slice(0,7);
+ el.insertAdjacentHTML('beforeend','<div class="nf-kicker">Finance · Recurring service billing</div><h2>Monthly invoice cycles</h2><p class="muted">Preview priced active services and generate immutable draft invoices. No tax, proration, payment collection or customer messaging is performed.</p><div class="card"><div class="toolbar"><div><label>Billing period</label><input id="cycle-period" type="month" min="2000-01" max="2099-12" value="'+initial+'" style="width:195px"></div><div class="tools"><button id="cycle-preview">Preview invoices</button><button class="primary" id="cycle-generate" disabled>Generate draft invoices</button></div></div><div id="cycle-output" role="status" class="nf-sidecard">Run a preview before generating any financial records.</div></div><div class="section"><div class="toolbar"><h3>Generated draft invoices</h3><button id="cycle-refresh">Refresh</button></div><div id="cycle-drafts"></div></div>');
+ const period=el.querySelector('#cycle-period'),previewBtn=el.querySelector('#cycle-preview'),generateBtn=el.querySelector('#cycle-generate'),output=el.querySelector('#cycle-output');
+ let currentProposal=null;
+ const showDrafts=()=>{
+  let drafts=all('invoices').filter(i=>i.source_service_id&&i.status==='draft').slice().sort((a,b)=>String(b.invoice_date).localeCompare(String(a.invoice_date)));
+  el.querySelector('#cycle-drafts').innerHTML=table('invoices',['number','name','customer_id','billing_period','due_date','amount','status'],drafts);
+  el.querySelectorAll('#cycle-drafts tr[data-id]').forEach(tr=>{
+    const row=drafts.find(i=>i.id===tr.dataset.id),cell=tr.lastElementChild;
+    if(!row||!cell)return;
+    cell.innerHTML='<div class="tools"><button data-issue="'+esc(row.id)+'">Issue</button><button data-void="'+esc(row.id)+'">Void</button></div>';
+  });
+  el.querySelectorAll('[data-issue]').forEach(btn=>btn.onclick=async()=>{
+    let row=drafts.find(i=>i.id===btn.dataset.issue);
+    if(!row||!confirm('Issue invoice '+row.number+'? The draft will become payable.'))return;
+    try{await call({action:'invoice_issue'},'POST',{id:row.id,revision:row.revision??1});await refresh()}catch(e){toast(e.message)}
+  });
+  el.querySelectorAll('[data-void]').forEach(btn=>btn.onclick=async()=>{
+    let row=drafts.find(i=>i.id===btn.dataset.void),reason=prompt('Reason for voiding invoice '+row.number+' (minimum 5 characters):');
+    if(reason===null)return;
+    try{await call({action:'invoice_void'},'POST',{id:row.id,revision:row.revision??1,reason});await refresh()}catch(e){toast(e.message)}
+  });
+ };
+ showDrafts();
+ const clear=()=>{currentProposal=null;generateBtn.disabled=true;output.textContent='Period changed. Run preview again.'};
+ period.addEventListener('change',clear);
+ previewBtn.onclick=async()=>{
+  generateBtn.disabled=true;currentProposal=null;output.textContent='Calculating service charges…';
+  try{
+   const proposal=await call({action:'billing_preview',period:period.value});currentProposal=proposal;
+   const rows=proposal.ready;
+   output.innerHTML='<div class="grid">'+[['Ready to draft',rows.length],['Already billed',proposal.existing.length],['Needs attention',proposal.skipped.length],['New draft total',nfMoney(proposal.ready_total)]].map(([k,v])=>'<div class="card"><small>'+esc(k)+'</small><div class="metric" style="font-size:24px">'+esc(v)+'</div></div>').join('')+'</div><div class="section"><h3>Eligible service charges</h3>'+nfRows(rows.map(x=>({...x,name:x.service})),[['customer','Account'],['name','Service'],['package','Plan'],['amount','ZAR'],['due_date','Due date']])+'</div>'+(proposal.skipped.length?'<div class="section"><h3>Skipped services</h3>'+nfRows(proposal.skipped.map(x=>({...x,name:x.service})),[['name','Service'],['customer','Account'],['reason','Reason']])+'</div>':'')+'<p class="nf-detail-subtitle">'+esc(proposal.warning)+'</p>';
+   generateBtn.disabled=!rows.length||state.role!=='admin';
+  }catch(e){output.textContent=e.message}
+ };
+ generateBtn.onclick=async()=>{
+  if(!currentProposal||!currentProposal.ready.length||period.value!==currentProposal.period)return;
+  const p=currentProposal;
+  if(!confirm('Generate '+p.ready.length+' DRAFT invoices totalling '+nfMoney(p.ready_total)+' for '+p.period+'? No messages or payments will be sent.'))return;
+  generateBtn.disabled=true;
+  try{
+   const r=await call({action:'billing_generate'},'POST',{period:p.period,token:p.token});
+   toast(r.created+' draft invoices created. Already billed: '+r.existing+'.');
+   await refresh();
+  }catch(e){output.textContent='Generation failed: '+e.message;currentProposal=null}
+ };
+ el.querySelector('#cycle-refresh').onclick=refresh;
+ if(state.role!=='admin')generateBtn.title='Only administrators may generate invoices';
+}
+function invoiceOutstanding(i){
+ if(['draft','void'].includes(i.status))return 0;
+ const paid=all('payments').filter(x=>x.invoice_id===i.id).reduce((n,x)=>n+(Number(x.amount)||0),0);
+ return Math.max(0,(Number(i.amount)||0)-paid);
+}
+function debtors(){
+ const el=document.querySelector('#content'),today=dateKey(new Date());
+ const open=all('invoices').filter(i=>invoiceOutstanding(i)>0);
+ const rows=open.map(i=>{
+  const due=i.due_date||i.invoice_date||today;
+  const day=Math.max(0,Math.floor((Date.parse(today+'T00:00:00')-Date.parse(due+'T00:00:00'))/86400000)||0);
+  return {...i,remaining:invoiceOutstanding(i),age:day,due};
+ });
+ const buckets=[['Current',r=>r.age===0],['1–30 days',r=>r.age>=1&&r.age<=30],['31–60 days',r=>r.age>=31&&r.age<=60],['61–90 days',r=>r.age>=61&&r.age<=90],['91+ days',r=>r.age>=91]];
+ el.insertAdjacentHTML('beforeend','<div class="nf-kicker">Finance · Account receivables</div><div class="nf-pagehead"><div><h2>Debtors and invoice ageing</h2><p class="muted">Based on issued/manual invoice values and explicitly linked payments only. Draft and void invoices are excluded.</p></div><button id="debtor-export">Export CSV</button></div><div class="grid">'+buckets.map(([name,filter])=>'<div class="card nf-metric"><small>'+esc(name)+'</small><div class="metric" style="font-size:24px">'+nfMoney(rows.filter(filter).reduce((n,r)=>n+r.remaining,0))+'</div></div>').join('')+'</div><div class="section card tablewrap"><table><thead><tr><th>Account</th><th>Invoice</th><th>Due</th><th>Days past due</th><th>Balance (ZAR)</th><th>Reminder</th></tr></thead><tbody>'+rows.sort((a,b)=>b.age-a.age).map(i=>'<tr><td>'+esc(lookup('customers',i.customer_id))+'</td><td>'+esc(i.number)+'</td><td>'+esc(i.due)+'</td><td>'+i.age+'</td><td>'+nfMoney(i.remaining)+'</td><td><button data-reminder="'+esc(i.id)+'">Copy draft</button></td></tr>').join('')+'</tbody></table>'+(rows.length?'':'<p class="nf-empty" style="padding:24px">No outstanding issued invoices found.</p>')+'</div>');
+ el.querySelector('#debtor-export').onclick=()=>{
+  const cols=['account','invoice','due','days','balance_zar'];
+  const lines=[cols.join(','),...rows.map(r=>[lookup('customers',r.customer_id),r.number,r.due,r.age,r.remaining.toFixed(2)].map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(','))];
+  const blob=new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download='netforge-debtors.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+ };
+ el.querySelectorAll('[data-reminder]').forEach(b=>b.onclick=async()=>{
+   const i=rows.find(x=>x.id===b.dataset.reminder),customer=all('customers').find(x=>x.id===i.customer_id);
+   const note='Hello '+(customer?.name||'')+', this is a reminder that invoice '+(i.number||i.id)+' has an outstanding balance of '+nfMoney(i.remaining)+' (due '+i.due+'). Please contact our accounts team if already settled.';
+   try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(note);toast('Reminder draft copied. No message was sent.')}else prompt('Copy reminder text — nothing is sent automatically:',note)}catch(e){prompt('Copy reminder text:',note)}
+ });
+}
+function reports(){
+ const el=document.querySelector('#content'),customers=all('customers'),services=all('services');
+ const prices=new Map(all('packages').map(p=>[String(p.name||'').toLowerCase(),Number(p.price)||0]));
+ const activeServices=services.filter(x=>x.status==='active'),priced=activeServices.map(x=>{let price=x.monthly_fee!==''&&x.monthly_fee!=null?Number(x.monthly_fee):prices.get(String(x.package||'').toLowerCase());return {...x,estimated:Number.isFinite(price)?price:0,hasPrice:Number.isFinite(price)&&price>0}});
+ const mrr=priced.reduce((n,x)=>n+x.estimated,0),unpriced=priced.filter(x=>!x.hasPrice).length;
+ const activeCustomers=customers.filter(x=>x.account_status==='active').length;
+ const logs=all('ticket_worklogs'),minutes=logs.reduce((n,x)=>n+(Number(x.minutes)||0),0);
+ const dueTasks=all('todos').filter(x=>x.status==='open'&&x.due_date&&x.due_date<=dateKey(new Date()));
+ const usage=all('usage_records'),download=usage.reduce((n,x)=>n+(Number(x.download_gb)||0),0);
+ const byTech={};for(const log of logs){let key=lookup('technicians',log.technician_id);byTech[key]=(byTech[key]||0)+(Number(log.minutes)||0)}
+ const byPlan={};for(const x of priced){let key=x.package||'Unassigned';byPlan[key]??={count:0,total:0};byPlan[key].count++;byPlan[key].total+=x.estimated}
+ el.insertAdjacentHTML('beforeend','<div class="nf-kicker">Business intelligence</div><h2>Operational reporting</h2><p class="muted">Calculated from entered records. MRR is an estimate based on active, priced services; it is not earned revenue or reconciled accounting.</p><div class="grid">'+[['Estimated MRR',nfMoney(mrr)],['Estimated ARPU',nfMoney(activeCustomers?mrr/activeCustomers:0)],['Active services',activeServices.length],['Services without price',unpriced],['Logged support hours',(minutes/60).toFixed(1)],['Overdue customer tasks',dueTasks.length],['Manual download total',download.toFixed(1)+' GB'],['Invoices with balances',all('invoices').filter(i=>invoiceOutstanding(i)>0).length]].map(([k,v])=>'<div class="card nf-metric"><small>'+esc(k)+'</small><div class="metric" style="font-size:24px">'+esc(v)+'</div></div>').join('')+'</div><div class="nf-grid-two section"><div class="card"><h3>Monthly services by package</h3>'+Object.entries(byPlan).sort((a,b)=>b[1].total-a[1].total).map(([k,v])=>'<div class="nf-statline"><span>'+esc(k)+' <small>('+v.count+' services)</small></span><b>'+nfMoney(v.total)+'</b></div>').join('')+'</div><div class="card"><h3>Helpdesk time logged</h3>'+Object.entries(byTech).sort((a,b)=>b[1]-a[1]).map(([k,v])=>'<div class="nf-statline"><span>'+esc(k)+'</span><b>'+(v/60).toFixed(2)+' hours</b></div>').join('')+'</div></div>');
 }
 function wisp(){
  const el=document.querySelector('#content'),sites=all('highsites'),sectors=all('sectors'),customers=all('customers'),links=all('backhauls'),outages=all('outages');
