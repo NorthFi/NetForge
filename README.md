@@ -19,9 +19,12 @@ selfhost/
     NetworkManagement.cs
     RadiusDynamicAuth.cs
     ServiceLifecycle.cs
+    CustomerPortal.cs
+    UsageAccounting.cs
   db/
     001_init.sql
     002_radius_management.sql
+    003_subscriber_portal_accounting.sql
   radius/
     Dockerfile
     entrypoint.sh
@@ -29,6 +32,10 @@ selfhost/
     index.html
     style.css
     app.js
+    portal/
+      index.html
+      style.css
+      app.js
   Dockerfile
   Caddyfile
   compose.yaml
@@ -74,6 +81,17 @@ The current self-hosted build includes:
 
 When a session disconnect request receives ACK, the NAS has acknowledged the request. Only a later accounting Stop or independent NAS observation confirms that the subscriber actually disconnected. A timeout is ambiguous, not proof of failure.
 
+## Phase 3: Customer self-service and observed usage
+
+- Customer portal: `https://<your-netforge-host>/portal/` (separate `NetForge.Portal` cookie and per-customer accounts; **staff login does not work there**).
+- In the staff CRM, select **Customer Portal**, choose a customer, provision a username and a unique password (minimum 14 characters), and securely hand the credentials to that subscriber.
+- Customers can view their own contact details, services, **issued/paid invoices only**, recorded payments, per-month usage estimates and their own support tickets. Staff create public responses or private internal notes from each ticket's **Ticket conversation** action.
+- Portal account disable/reset revokes earlier sessions by incrementing an account version. Customers can also change their own password; their other sessions are invalidated.
+- New RADIUS accounting changes are captured by PostgreSQL trigger `trg_netforge_usage` into `radius_usage_intervals`. The **RADIUS Usage** staff screen and portal Usage tab now display UTC month estimates apportioned by the measured interval duration, and report sample quality/anomalies.
+- Historic sessions from before migration 003 do **not** have interim snapshots and are not backfilled as measured data.
+
+Complete operational details, security assumptions and validation constraints: [Customer portal and usage](selfhost/CUSTOMER_PORTAL_ACCOUNTING.md).
+
 ## Current capabilities
 
 - Staff login with PBKDF2 password hashes, cookie authentication, role checks and request CSRF tokens.
@@ -82,8 +100,8 @@ When a session disconnect request receives ACK, the NAS has acknowledged the req
 - Foreign-key validation for customer → site → sector relationships.
 - PPPoE service creation, password rotation, RADIUS check/reply provisioning, bandwidth replies and optional static IPv4.
 - A separate FreeRADIUS 3.2 container using SQL tables `radcheck`, `radreply`, `nas`, `radacct`, and `radpostauth`.
-- Accounting history with active/unclosed session visibility and recency indicators.
-- Tickets with customer/site associations, type, priority and status.
+- Accounting history with active/unclosed session visibility, recorded usage intervals, UTC month estimates, and counter-reset anomaly detection.
+- Tickets with customer/site associations, type, priority and status, including public customer replies and internal-only support notes.
 - Basic invoices, monthly draft creation and payment recording with payment balance protection.
 - Auditing for key administrative changes.
 
@@ -105,11 +123,11 @@ dotnet restore selfhost/src/NetForge.Api/NetForge.Api.csproj
 dotnet publish selfhost/src/NetForge.Api/NetForge.Api.csproj -c Release
 ```
 
-Set `Database__ConnectionString`, `NETFORGE_ADMIN_USER`, `NETFORGE_ADMIN_PASSWORD`, and `NETFORGE_KEY_DIRECTORY` in the process environment, then run the published `NetForge.Api.dll` or native executable. The app initializes its PostgreSQL schema. You still need to provide an independently installed FreeRADIUS PostgreSQL integration and a production TLS reverse proxy. Native Windows API hosting does **not** remove the requirement for a separate FreeRADIUS service.
+Set `Database__ConnectionString`, `NETFORGE_ADMIN_USER`, `NETFORGE_ADMIN_PASSWORD`, and `NETFORGE_KEY_DIRECTORY` in the process environment, then run the published `NetForge.Api.dll` or native executable. The app applies numbered PostgreSQL migrations transactionally with checksums and an advisory lock. Existing migration files must never be edited after being applied to a live database. You still need to provide an independently installed FreeRADIUS PostgreSQL integration and a production TLS reverse proxy. Native Windows API hosting does **not** remove the requirement for a separate FreeRADIUS service.
 
 ## Current gaps versus full Splynx functionality
 
-Do **not** assume this is complete Splynx functionality. Missing major components include true live-session CoA speed changes, large-scale NAS automation and comprehensive NAS lifecycle, automated payment gateways, prepaid vouchers, RADIUS usage-billing reconciliation, TR-069/USP ACS, SNMP telemetry/alerts, API token access, customer portal, backups and restore UI, VoIP CDR billing, automated technician dispatch, messaging gateways, stock procurement, contracts and quotations, complete audit and authorization policies, multi-tenant operations, and HA.
+Do **not** assume this is complete Splynx functionality. Missing major components include multi-factor customer and staff authentication, self-service payment gateways, true live-session CoA speed changes, large-scale NAS automation and comprehensive NAS lifecycle, automated payment gateways, prepaid vouchers, RADIUS usage-billing reconciliation, TR-069/USP ACS, SNMP telemetry/alerts, API token access, customer portal, backups and restore UI, VoIP CDR billing, automated technician dispatch, messaging gateways, stock procurement, contracts and quotations, complete audit and authorization policies, multi-tenant operations, and HA.
 
 This branch **intentionally excludes the RF link planner**. It retains basic WISP highsite/sector/subscriber relationships and equipment records.
 
