@@ -270,7 +270,7 @@ try {
         audit('portal_'.$op,'customers',$id);
         respond($result);
     }
-    $allowed=['customers','highsites','sectors','equipment','backhauls','scripts','jobs','tickets','branches','technicians','packages','staff','outages','maintenance','inventory','leads','changes','ipam','activities','services','invoices','payments','surveys','workorders','link_checks','ticket_worklogs','todos','usage_records','ticket_messages'];
+    $allowed=['customers','highsites','sectors','equipment','backhauls','scripts','jobs','tickets','branches','technicians','packages','staff','outages','maintenance','inventory','leads','changes','ipam','activities','services','invoices','payments','surveys','workorders','link_checks','ticket_worklogs','todos','usage_records','ticket_messages','announcements','knowledgebase','canned_responses'];
     $category=(string)($_GET['category']??'');
     if (!in_array($category,$allowed,true)) respond(['error'=>'Unknown category'],404);
     if ($category==='staff' && ($_SESSION['role']??'')!=='admin') respond(['error'=>'Admin only'],403);
@@ -309,6 +309,9 @@ try {
           'link_checks'=>['name','customer_id','sector_id','rssi_dbm','snr_db','ccq','tx_mbps','rx_mbps','captured_at','notes'],
           'ticket_worklogs'=>['name','ticket_id','technician_id','minutes','work_date','description','performed_by'],
           'ticket_messages'=>['name','ticket_id','visibility','body','author','created_at'],
+          'announcements'=>['name','body','published','branch_id','category'],
+          'knowledgebase'=>['name','body','published','category'],
+          'canned_responses'=>['name','body','category'],
           'todos'=>['name','customer_id','ticket_id','due_date','assigned_to','status','description'],
           'usage_records'=>['name','service_id','customer_id','period','download_gb','upload_gb','cap_gb','source','notes'],
         ];
@@ -427,6 +430,19 @@ try {
             respond(['error'=>'Azimuth must be in the range 0 to less than 360 degrees'],422);
         }
 
+        if(in_array($category,['announcements','knowledgebase','canned_responses'],true)){
+            if(!in_array($_SESSION['role']??'',['admin','dispatcher'],true))
+                respond(['error'=>'Communications publishing requires admin or dispatcher'],403);
+            if(trim((string)($item['body']??''))==='')
+                respond(['error'=>'Message body cannot be empty'],422);
+            if($category!=='canned_responses'&&!in_array((string)($item['published']??''),['yes','no'],true))
+                respond(['error'=>'Choose yes or no for published'],422);
+            if($category==='announcements'&&($item['branch_id']??'')!==''){
+                $branches=locked('branches',fn($rows)=>$rows);
+                if(!array_filter($branches,fn($r)=>($r['id']??'')===$item['branch_id']))
+                    respond(['error'=>'Branch not found'],422);
+            }
+        }
         if($category==='ticket_messages'){
             if($method==='PUT')respond(['error'=>'Ticket messages cannot be edited'],405);
             $tid=$item['ticket_id']??'';
