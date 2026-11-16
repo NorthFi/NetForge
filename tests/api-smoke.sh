@@ -211,6 +211,24 @@ if grep -q 'Other account secret fault' "$BASE/portal-result"; then echo "Other 
 papi POST ticket '{"name":"Subscriber support request","description":"Intermittent wireless service since yesterday"}' 201
 api GET category=tickets "" 200
 grep -q 'Subscriber support request' "$BASE/result.json"
+
+# Customer communications: published content only and branch-scoped broadcasts.
+api POST category=announcements '{"name":"Published network notice","body":"Maintenance announcement for all accounts","published":"yes","category":"network"}' 201
+api POST category=announcements '{"name":"Confidential draft notice","body":"Do not publish this draft","published":"no"}' 201
+api POST category=knowledgebase '{"name":"How to reboot your router","body":"Switch power off, then on once.","published":"yes","category":"connectivity"}' 201
+api POST category=knowledgebase '{"name":"Unpublished staff article","body":"Internal operational text","published":"no"}' 201
+api POST category=canned_responses '{"name":"Reboot router instructions","body":"Please reboot your router once and reply with the result."}' 201
+api POST category=branches '{"name":"Different branch"}' 201
+FOREIGN_BRANCH="$(value id)"
+api POST category=announcements "{\"name\":\"Other-branch notice\",\"body\":\"Private to another branch\",\"published\":\"yes\",\"branch_id\":\"$FOREIGN_BRANCH\"}" 201
+papi GET data "" 200
+grep -q 'Maintenance announcement for all accounts' "$BASE/portal-result"
+grep -q 'How to reboot your router' "$BASE/portal-result"
+if grep -qE 'Do not publish this draft|Internal operational text|Private to another branch' "$BASE/portal-result"; then
+  echo "Unpublished or other-branch portal content leaked" >&2
+  exit 1
+fi
+
 papi POST password '{"current_password":"Portal-CI-Unique-Password-2026!","new_password":"Portal-New-Long-Password-2026!"}' 200
 api POST action=portal_accounts "{\"operation\":\"reset\",\"customer_id\":\"$CUSTOMER\",\"password\":\"Admin-Reset-Long-Password-2026!\"}" 200
 papi GET data "" 401

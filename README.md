@@ -16,6 +16,12 @@ public_html/netforge/
     netforge.js
   api/
     index.php
+  portal/
+    index.html
+    api.php
+    assets/
+      portal.js
+      portal.css
 # Private account directory (automatically created)
 netforge-private/
   *.json
@@ -27,14 +33,28 @@ The private storage directory must be outside `public_html`. The API fails close
 ## Capabilities
 
 - Dashboard: customer totals, ticket queue, overdue work, site and stock alerts, and planned sector capacity.
-- CRM: customer 360° profiles, business/family parent-child account links, leads, communication history, linked services, tickets, assigned follow-up tasks, monthly manually entered usage, and customer equipment.
+- CRM: customer 360° profiles, business/family parent-child account links, leads, communication history, linked services, tickets, assigned follow-up tasks, monthly manually entered usage, customer equipment, private staff notes, public ticket conversations, published announcements, support knowledge base, and canned replies.
 - Finance: manual invoice/payment registers; idempotent **preview-and-confirm monthly draft invoice generation** for active, priced services; controlled issue/void transitions; debtor ageing and manual reminder drafts; package catalogue; MRR and ARPU estimates; CSV exports. No automated payment capture or invoice delivery.
 - Networking: highsite workspaces (Overview / Distribution / Backhaul / Access / Power / Customers / Outages), access sectors, backhaul records, IP address register, incident tracking and infrastructure equipment.
 - WISP intelligence: subscriber distribution, manual RF health observations, sector capacity thresholds, frequency reuse warnings, outage impact preview, GPS-based topology drawing, link-budget estimate, midpoint first Fresnel-zone calculator and midpoint Earth-curvature bulge.
 - Field operations: branch-aware technician scheduling, drag-and-drop ticket/work-order assignments, ticket worklogs with minutes and helpdesk history, work orders, RF surveys, maintenance and on-call metadata.
 - Inventory: stock levels, reorder thresholds, suppliers and deployed customer/site equipment; server-side stock adjustment with optimistic revisions, idempotency IDs, reason logs, and prevention of negative stock.
 - Scripts: editable library of script text and approval/risk metadata, **no remote execution**.
-- Administration: branch management, staff login accounts, technicians, package plans, sectors and settings.
+- Administration: branch management, staff login accounts, separate customer portal credentials, technicians, package plans, sectors and settings.
+
+## Customer self-service portal
+
+The subscriber portal is independently implemented under `/netforge/portal/`, using its own session cookie (`NFPORTALSESSID`) and separate `portal_auth.json` credentials.
+
+1. Create customer accounts in CRM.
+2. Sign in as an **administrator**, open **CRM → Customer portal**, select the customer and create a username with a unique password of at least 14 characters.
+3. Communicate that password using a separately verified private channel. NetForge does **not** email or SMS passwords.
+4. The customer opens `https://northfi.co.za/netforge/portal/`, signs in, and can view **only their own** customer profile, services, non-draft invoices, recorded payments, manually entered usage, and equipment metadata.
+5. The customer can create support tickets, see public staff replies, reply to open tickets, and change their own password. Staff-only notes and management IP addresses are excluded from portal output.
+6. Staff create announcements and knowledge articles under **CRM → Communications** and explicitly mark them as published. Announcements can be sent to all customers or scoped to one branch. The portal also displays News and Help.
+7. Administrators may disable, re-enable, or reset portal accounts; reset and disable operations revoke existing portal sessions.
+
+Customer account credentials are not staff credentials, and the portal does not provide network service passwords, Wi-Fi credentials, router configuration, account payment capture, self-activation, plan changes, or automated ticket notifications. This remains subject to security review before exposure to production subscribers.
 
 ## Monthly billing and support workflows
 
@@ -59,7 +79,7 @@ The private storage directory must be outside `public_html`. The API fails close
 
 ## Deployment (Afrihost cPanel)
 
-1. Upload `index.html`, `.htaccess`, `assets/`, and `api/` into `public_html/netforge/` while retaining the paths above.
+1. Upload `index.html`, `.htaccess`, `assets/`, `api/`, and `portal/` into `public_html/netforge/` while retaining the paths above.
 2. Use PHP **8.1 or newer**, with sessions and JSON enabled. Enable HTTPS for the hostname in cPanel.
 3. Confirm PHP can create a writable `netforge-private` directory in the account home, outside `public_html`. Never relocate this directory into the web root.
 4. Open `https://northfi.co.za/netforge/` and create the initial administrator using a unique password at least 14 characters long.
@@ -72,13 +92,13 @@ The development branch `netforge-isp-manager` must be tested on a staging path b
 
 GitHub Actions runs PHP syntax, JavaScript syntax/screen verification and authenticated API integration smoke tests covering administrator bootstrap; site/sector/customer assignment; equipment; communications; service records; recurring billing preview, draft issuance and duplicate prevention; payment safeguards; RF observations, surveys and work orders; helpdesk time logs, customer tasks and manual usage; inventory stock movements, stale edits, duplicate IPAM, deletion restrictions, and optimistic concurrency.
 
-Workflow: `.github/workflows/netforge-ci.yml`.
+Workflow: `.github/workflows/netforge-ci.yml`. The workflow also tests customer portal authentication, cross-account isolation, credential revocation, public/internal ticket privacy and announcement publication/branch scoping.
 
 ## Security and operational limitations
 
 This remains a staged MVP, not a claim of feature parity with Splynx and not an audited production billing or monitoring system.
 
-- No live SNMP, RouterOS API, RADIUS, PPPoE provisioning, TR-069 ACS, WhatsApp messaging, payment gateway, automated payment reconciliation, tax invoice generation, remote script execution, or network alarms yet.
+- No live SNMP, RouterOS API, RADIUS, PPPoE provisioning, TR-069 ACS, WhatsApp messaging, payment gateway, automated payment reconciliation, tax invoice generation, remote script execution, or network alarms yet. Customer portal access is currently read-only for billing and service details.
 - RF calculations assume free-space propagation and configurable effective Earth radius. They do not model terrain, trees, buildings, multipath, or interference. All RF snapshots and site statuses are manually entered.
 - The GPS topology connects configured highsites visually; it is **not** a live bandwidth or availability map.
 - Session cookies are Secure/HttpOnly/SameSite. CSRF checks, initial RBAC and per-IP-and-user login throttling exist. Granular per-branch permissions, MFA and comprehensive penetration testing are still required.
