@@ -1,112 +1,96 @@
 # root/README.md
-# NetForge — ISP / WISP Operations Manager
+# NetForge — .NET 11 self-hosted ISP management
 
-NetForge is an independently implemented, Splynx-inspired ISP management interface with additional WISP engineering tools. It does not include or redistribute Splynx source code, trademarks, graphics, or private APIs.
+**Development branch:** `netforge-selfhost-dotnet`
 
-## Architecture
+NetForge is a self-hosted, independently developed ISP/WISP platform built with C# / ASP.NET Core (.NET 11), PostgreSQL 17 and FreeRADIUS 3.2. The new stack replaces PHP/JSON-file hosting. The earlier cPanel application is preserved separately on branch `netforge-isp-manager` and the live `Published` branch is unchanged.
 
-A static HTML/CSS/JavaScript frontend connects to a PHP 8.1+ JSON-file API, so the initial installation works on Afrihost cPanel without SQL, Node.js, Docker, Redis, or a persistent daemon.
+This branch is an **engineering MVP**, not a claim of feature parity with Splynx. Core CRM data is normalized in PostgreSQL and RADIUS authentication/accounting is handled by an established AAA server.
+
+## Repository layout
 
 ```
-public_html/netforge/
-  index.html
-  .htaccess
-  assets/
-    netforge.css
-    netforge.js
-  api/
-    index.php
-  portal/
+selfhost/
+  src/NetForge.Api/
+    NetForge.Api.csproj
+    Program.cs
+    Core.cs
+    Endpoints.cs
+  db/001_init.sql
+  radius/
+    Dockerfile
+    entrypoint.sh
+  web/
     index.html
-    api.php
-    assets/
-      portal.js
-      portal.css
-# Private account directory (automatically created)
-netforge-private/
-  *.json
-  *.lock
+    style.css
+    app.js
+  Dockerfile
+  compose.yaml
+  .env.example
 ```
 
-The private storage directory must be outside `public_html`. The API fails closed if the directory cannot be initialized safely. File records use exclusive locks and temporary-file rename for atomic writes.
+## Host requirements
 
-## Capabilities
+- **Linux (recommended):** Ubuntu Server 24.04+, Debian stable, or a recent Linux with Docker Engine and Compose v2.
+- **Windows:** Windows 11 / Server with Docker Desktop or a supported WSL2/Linux Docker engine. FreeRADIUS runs in a **Linux container**; it is not a native Windows service.
+- **Native C# API:** .NET SDK/runtime 11 and a reachable PostgreSQL 17+ instance. The same API builds for Windows and Linux with `dotnet publish`.
+- An explicit TLS reverse proxy for production (Caddy, Nginx or equivalent) and a private management LAN/VPN.
+- A dedicated private host address reachable by your RADIUS NAS routers over UDP 1812 (authentication) and UDP 1813 (accounting).
 
-- Dashboard: customer totals, ticket queue, overdue work, site and stock alerts, and planned sector capacity.
-- CRM: customer 360° profiles, business/family parent-child account links, leads, communication history, linked services, tickets, assigned follow-up tasks, monthly manually entered usage, customer equipment, private staff notes, public ticket conversations, published announcements, support knowledge base, and canned replies.
-- Finance: manual invoice/payment registers; idempotent **preview-and-confirm monthly draft invoice generation** for active, priced services; controlled issue/void transitions; debtor ageing and manual reminder drafts; package catalogue; MRR and ARPU estimates; CSV exports. No automated payment capture or invoice delivery.
-- Networking: highsite workspaces (Overview / Distribution / Backhaul / Access / Power / Customers / Outages), access sectors, backhaul records, IP address register, incident tracking and infrastructure equipment.
-- WISP intelligence: subscriber distribution, manual RF health observations, sector capacity thresholds, frequency reuse warnings, outage impact preview, GPS-based topology drawing, link-budget estimate, midpoint first Fresnel-zone calculator and midpoint Earth-curvature bulge.
-- Field operations: branch-aware technician scheduling, drag-and-drop ticket/work-order assignments, ticket worklogs with minutes and helpdesk history, work orders, RF surveys, maintenance and on-call metadata.
-- Inventory: stock levels, reorder thresholds, suppliers and deployed customer/site equipment; server-side stock adjustment with optimistic revisions, idempotency IDs, reason logs, and prevention of negative stock.
-- Scripts: editable library of script text and approval/risk metadata, **no remote execution**.
-- Administration: branch management, staff login accounts, separate customer portal credentials, technicians, package plans, sectors and settings.
+## Quick start (Docker Compose)
 
-## Customer self-service portal
+1. Check out `netforge-selfhost-dotnet`.
+2. Run `cd selfhost` and copy `.env.example` to `.env`.
+3. Replace `POSTGRES_PASSWORD` and `NETFORGE_ADMIN_PASSWORD` with **distinct**, strong random strings; the database password must contain only letters, numbers, `_`, `.`, or `-` because FreeRADIUS config interpolates it at startup. Placeholder strings beginning `REPLACE_` are rejected by the application.
+4. Set `RADIUS_BIND_IP` to the machine's **private** RADIUS listening address, and configure your firewall to allow UDP 1812/1813 only from approved NAS IP addresses. If you cannot bind a private address, restrict public UDP 1812/1813 at your router and host firewall.
+5. Run `docker compose up -d --build`.
+6. Place HTTPS termination in front of `127.0.0.1:8080`, which is intentionally only bound to loopback. Visit the TLS URL and sign in using the administrator credentials.
+7. Create a branch, highsite, sector, customer, package, and pending subscriber service. Use **Set/rotate RADIUS password** to provision the service's FreeRADIUS `radcheck` entry.
+8. Under **RADIUS NAS**, add each router with its IPv4 address and long random shared secret. Then run `docker compose restart radius`. SQL NAS records are loaded **at FreeRADIUS startup**, not dynamically.
+9. Configure your MikroTik or other NAS to send auth/accounting packets to the host. Verify FreeRADIUS logs and NetForge's RADIUS Sessions screen.
+10. Schedule PostgreSQL backups and test restores before loading production data.
 
-The subscriber portal is independently implemented under `/netforge/portal/`, using its own session cookie (`NFPORTALSESSID`) and separate `portal_auth.json` credentials.
+**Important:** The API requires HTTPS for its Secure session cookie. Direct HTTP access on the loopback port is for a proxy connection or health-check only. A bare HTTP browser login may not persist.
 
-1. Create customer accounts in CRM.
-2. Sign in as an **administrator**, open **CRM → Customer portal**, select the customer and create a username with a unique password of at least 14 characters.
-3. Communicate that password using a separately verified private channel. NetForge does **not** email or SMS passwords.
-4. The customer opens `https://northfi.co.za/netforge/portal/`, signs in, and can view **only their own** customer profile, services, non-draft invoices, recorded payments, manually entered usage, and equipment metadata.
-5. The customer can create support tickets, see public staff replies, reply to open tickets, and change their own password. Staff-only notes and management IP addresses are excluded from portal output.
-6. Staff create announcements and knowledge articles under **CRM → Communications** and explicitly mark them as published. Announcements can be sent to all customers or scoped to one branch. The portal also displays News and Help.
-7. Administrators may disable, re-enable, or reset portal accounts; reset and disable operations revoke existing portal sessions.
+## Current capabilities
 
-Customer account credentials are not staff credentials, and the portal does not provide network service passwords, Wi-Fi credentials, router configuration, account payment capture, self-activation, plan changes, or automated ticket notifications. This remains subject to security review before exposure to production subscribers.
+- Staff login with PBKDF2 password hashes, cookie authentication, role checks and request CSRF tokens.
+- Admin creation of staff, branches, service packages and NAS devices.
+- Customers, highsites, access sectors and customer/site equipment records.
+- Foreign-key validation for customer → site → sector relationships.
+- PPPoE service creation, password rotation, RADIUS check/reply provisioning, bandwidth replies and optional static IPv4.
+- A separate FreeRADIUS 3.2 container using SQL tables `radcheck`, `radreply`, `nas`, `radacct`, and `radpostauth`.
+- Accounting history with active/unclosed session visibility and recency indicators.
+- Tickets with customer/site associations, type, priority and status.
+- Basic invoices, monthly draft creation and payment recording with payment balance protection.
+- Auditing for key administrative changes.
 
-## Monthly billing and support workflows
+## Critical RADIUS and billing semantics
 
-1. In **Administration → Packages**, create a package with a positive `price` (monthly ZAR).
-2. Under **Finance → Services** (or a customer's **Services** tab), assign an **active** service to an **active** customer and set its package to the package name. Optionally enter `monthly_fee` to override package price for that service.
-3. Give the customer a `billing_day` between 1 and 28 in the customer editor. Missing/invalid values default to day 1 of the selected billing month.
-4. Open **Recurring billing**, select a month, and run **Preview**. Confirm eligible, already billed and skipped services. The same service is charged only once for a given month.
-5. An **administrator** may generate draft invoices after explicitly confirming the preview. Repeated calls cannot silently create duplicates. Drafts are not payable or emailed.
-6. Issue individual drafts when reviewed. Only issued invoices can receive allocated payments. An invoice with payments cannot be voided. Generated invoice snapshots cannot be directly edited or deleted.
-7. Use **Debtors** for ageing and copyable reminder text. Sending reminders is entirely manual; no messaging integration is active.
-8. Use **Reports** for estimated MRR, ARPU, support hours and usage summaries. These values are derived from manually stored source data, not live equipment telemetry.
+- The service **must be created pending** and then activated with a password. No RADIUS password is returned by API reads.
+- FreeRADIUS uses the `Cleartext-Password` check item for PAP/CHAP/MSCHAP compatibility. This is **sensitive plaintext in PostgreSQL**. Encrypt database volumes/backups, restrict database access, use network segmentation, and plan a dedicated RADIUS database account with least-privilege access.
+- Suspending a customer or service deletes the active `Cleartext-Password` check item. It prevents **new authentication**; it does **not** disconnect an existing PPPoE session. CoA/Disconnect is not yet implemented.
+- The session list shows unclosed accounting records, which may include stale sessions. The `recently_seen` indicator is based on the last 30 minutes.
+- MikroTik `Mikrotik-Rate-Limit` values are admin-configured and must match your intended RouterOS directionality.
+- Recurring invoice draft creation is **manual** and idempotent per customer and billing month. There is no tax, proration, payment gateway, credit ledger, SMS/email notification or legally compliant invoice PDF implementation yet.
+- Do not expose the PostgreSQL port or the application management port directly to the public Internet.
+- Do not place RADIUS device shared secrets in tickets or notes. The NAS secret is displayed only at creation time and is stored in PostgreSQL for FreeRADIUS to use.
 
-**Linked customer accounts:** Assign a parent account from the customer editor or create child accounts from Customer 360°. Cycles are rejected and parents with linked children cannot be deleted. This is for support and navigation only; automatic combined invoicing/payment consolidation is **not** enabled.
+## Native Windows or Linux API (without Docker)
 
-**Billing restrictions:** Prices must be numeric, positive, and have at most two decimal places; there is no VAT calculation, proration, prepaid balance, credit-note/refund ledger, advance credit, payment gateway, or compliant tax invoice/PDF generation. Active services with missing prices are skipped and reported. Billing creation is a manual operator action, not a scheduled background process. Never use this for legal/tax invoices before implementing the jurisdiction-specific requirements.
+```powershell
+dotnet restore selfhost/src/NetForge.Api/NetForge.Api.csproj
+dotnet publish selfhost/src/NetForge.Api/NetForge.Api.csproj -c Release
+```
 
-**Ticketing:** Open a ticket for its customer, highsite, VoIP or other service, log technician minutes in its worklog, add calls and linked work orders, and track customer follow-up tasks. Time logging is manual; SLA targets are not automatically enforced.
+Set `Database__ConnectionString`, `NETFORGE_ADMIN_USER`, `NETFORGE_ADMIN_PASSWORD`, and `NETFORGE_KEY_DIRECTORY` in the process environment, then run the published `NetForge.Api.dll` or native executable. The app initializes its PostgreSQL schema. You still need to provide an independently installed FreeRADIUS PostgreSQL integration and a production TLS reverse proxy. Native Windows API hosting does **not** remove the requirement for a separate FreeRADIUS service.
 
-**Stock:** Create a stock item, then use its **Adjust stock** action with a signed quantity change and mandatory reason. Ordinary inventory edits cannot modify existing stock quantities; the adjustment action writes an audit movement entry under the item's JSON record. Initial inventory quantities can be entered when creating a new item, so confirm opening stock during initial setup.
+## Current gaps versus full Splynx functionality
 
-**Data usage:** Monthly upload/download GB records are manually entered; no RADIUS accounting import, data cap enforcement, throttling or automated collection occurs.
+Do **not** assume this is complete Splynx functionality. Missing major components include RADIUS CoA/Disconnect, comprehensive NAS lifecycle, automated payment gateways, prepaid vouchers, RADIUS usage-billing reconciliation, TR-069/USP ACS, SNMP telemetry/alerts, API token access, customer portal, backups and restore UI, VoIP CDR billing, automated technician dispatch, messaging gateways, stock procurement, contracts and quotations, complete audit and authorization policies, multi-tenant operations, and HA.
 
-## Deployment (Afrihost cPanel)
+This branch **intentionally excludes the RF link planner**. It retains basic WISP highsite/sector/subscriber relationships and equipment records.
 
-1. Upload `index.html`, `.htaccess`, `assets/`, `api/`, and `portal/` into `public_html/netforge/` while retaining the paths above.
-2. Use PHP **8.1 or newer**, with sessions and JSON enabled. Enable HTTPS for the hostname in cPanel.
-3. Confirm PHP can create a writable `netforge-private` directory in the account home, outside `public_html`. Never relocate this directory into the web root.
-4. Open `https://northfi.co.za/netforge/` and create the initial administrator using a unique password at least 14 characters long.
-5. Configure branches, highsites and sectors first; then assign each customer to their highsite and a sector belonging to that site.
-6. Store regular encrypted backups of `netforge-private`; test restoration, and restrict account directory access to the PHP process and authorized server administrators.
+## Status
 
-The development branch `netforge-isp-manager` must be tested on a staging path before publishing. The `Published` branch remains unaffected.
-
-## Automated checks
-
-GitHub Actions runs PHP syntax, JavaScript syntax/screen verification and authenticated API integration smoke tests covering administrator bootstrap; site/sector/customer assignment; equipment; communications; service records; recurring billing preview, draft issuance and duplicate prevention; payment safeguards; RF observations, surveys and work orders; helpdesk time logs, customer tasks and manual usage; inventory stock movements, stale edits, duplicate IPAM, deletion restrictions, and optimistic concurrency.
-
-Workflow: `.github/workflows/netforge-ci.yml`. The workflow also tests customer portal authentication, cross-account isolation, credential revocation, public/internal ticket privacy and announcement publication/branch scoping.
-
-## Security and operational limitations
-
-This remains a staged MVP, not a claim of feature parity with Splynx and not an audited production billing or monitoring system.
-
-- No live SNMP, RouterOS API, RADIUS, PPPoE provisioning, TR-069 ACS, WhatsApp messaging, payment gateway, automated payment reconciliation, tax invoice generation, remote script execution, or network alarms yet. Customer portal access is currently read-only for billing and service details.
-- RF calculations assume free-space propagation and configurable effective Earth radius. They do not model terrain, trees, buildings, multipath, or interference. All RF snapshots and site statuses are manually entered.
-- The GPS topology connects configured highsites visually; it is **not** a live bandwidth or availability map.
-- Session cookies are Secure/HttpOnly/SameSite. CSRF checks, initial RBAC and per-IP-and-user login throttling exist. Granular per-branch permissions, MFA and comprehensive penetration testing are still required.
-- Device management passwords are deliberately excluded from file storage; browser access only opens HTTP(S) links. Winbox and SSH require a trusted workstation or future secure agent.
-- Records have optimistic revisions, but inter-collection updates are not transactional. Branch and service references need more comprehensive integrity checks before larger deployments.
-- Never store payment card details, API secrets, or passwords in free-text notes, scripts or equipment records.
-- PHP is file-backed and intended for small deployments. Migrating later to PostgreSQL and a dedicated automation worker is strongly recommended.
-
-## Licensing and independence
-
-NetForge uses an original layout and implementation inspired by common ISP CRM conventions. Splynx is a separate product and trademark.
+Initial code with automated build verification; not deployed or acceptance-tested against production NAS devices. Require TLS, backups, NAS isolation, auditing, security tests and vendor-specific RADIUS acceptance tests prior to a live cutover.

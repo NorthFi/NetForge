@@ -1,0 +1,8 @@
+# root/.dockerignore
+.git
+**/.env
+**/bin/
+**/obj/
+**/.vs/
+**/*.user
+**/*.log

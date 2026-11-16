@@ -1,0 +1,34 @@
+# root/.github/workflows/netforge-dotnet.yml
+name: NetForge .NET 11 self-host validation
+on:
+  push:
+    branches: [netforge-selfhost-dotnet]
+  pull_request:
+    paths:
+      - 'selfhost/**'
+      - '.github/workflows/netforge-dotnet.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '11.0.x'
+      - name: Validate C# and NuGet references
+        run: dotnet build selfhost/src/NetForge.Api/NetForge.Api.csproj --configuration Release
+      - name: Validate browser JavaScript
+        run: node --check selfhost/web/app.js
+      - name: Validate FreeRADIUS bootstrap shell
+        run: sh -n selfhost/radius/entrypoint.sh
+      - name: Check compose syntax
+        shell: bash
+        run: |
+          cp selfhost/.env.example selfhost/.env
+          cd selfhost
+          docker compose config --quiet
+      - name: Build publish output
+        run: dotnet publish selfhost/src/NetForge.Api/NetForge.Api.csproj -c Release -o /tmp/netforge-publish --no-restore
