@@ -136,8 +136,19 @@ try{
     $usage=safeRows('usage_records',$customerId,['id','service_id','period','download_gb','upload_gb','cap_gb']);
     // NEVER disclose device management IP addresses, usernames, stored notes, or secrets.
     $equipment=safeRows('equipment',$customerId,['id','name','type','category','ownership','serial_number','warranty_expiry']);
+
+    // Broadcast news and knowledge articles are explicitly published by staff.
+    // Unpublished drafts and announcements for other branches never reach clients.
+    $branch=(string)($mine['branch_id']??'');
+    $news=portalRows('announcements',fn($r)=>array_values(array_map(
+      fn($x)=>array_intersect_key($x,array_flip(['id','name','body','category','created_at'])),
+      array_filter($r,fn($x)=>($x['published']??'')==='yes'&&
+        (($x['branch_id']??'')===''||($x['branch_id']??'')===$branch)))));
+    $articles=portalRows('knowledgebase',fn($r)=>array_values(array_map(
+      fn($x)=>array_intersect_key($x,array_flip(['id','name','body','category','created_at'])),
+      array_filter($r,fn($x)=>($x['published']??'')==='yes'))));
     result(['customer'=>$safe,'services'=>$services,'tickets'=>$tickets,'messages'=>$public,
-      'invoices'=>$invoices,'payments'=>$payments,'usage'=>$usage,'equipment'=>$equipment]);
+      'invoices'=>$invoices,'payments'=>$payments,'usage'=>$usage,'equipment'=>$equipment,'announcements'=>$news,'articles'=>$articles]);
   }
   if($action==='ticket'&&$method==='POST'){
     portalCsrf();$b=portalBody();$name=trim((string)($b['name']??''));$description=trim((string)($b['description']??''));
