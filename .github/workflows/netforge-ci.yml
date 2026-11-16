@@ -24,7 +24,9 @@ jobs:
           node --version
           curl --version
       - name: Validate PHP syntax
-        run: php -l api/index.php
+        run: |
+          php -l api/index.php
+          php -l portal/api.php
       - name: Validate browser JavaScript
         run: node tests/check-frontend.mjs
       - name: API smoke test

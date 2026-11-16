@@ -6,11 +6,19 @@ import { strict as assert } from 'node:assert';
 const html = readFileSync('index.html', 'utf8');
 const js = readFileSync('assets/netforge.js', 'utf8');
 const css = readFileSync('assets/netforge.css', 'utf8');
+const portalHtml = readFileSync('portal/index.html', 'utf8');
+const portalJs = readFileSync('portal/assets/portal.js', 'utf8');
+const portalCss = readFileSync('portal/assets/portal.css', 'utf8');
 
 assert.ok(html.includes('src="assets/netforge.js"'), 'Missing bundled app script');
 assert.ok(html.includes('href="assets/netforge.css"'), 'Missing theme stylesheet');
 assert.ok(!/<script\s*>/i.test(html), 'Do not use inline JavaScript');
 new Script(js, { filename: 'assets/netforge.js' });
+new Script(portalJs, { filename: 'portal/assets/portal.js' });
+assert.ok(portalHtml.includes('assets/portal.js') && portalHtml.includes('assets/portal.css'));
+assert.ok(portalCss.includes('.login') && portalJs.includes("request('ticket'"));
+assert.ok(js.includes('function portalAccounts('), 'Missing portal enrollment');
+assert.ok(js.includes("'ticket_messages'"), 'Missing ticket correspondence');
 
 const views = ['dashboard', 'wisp', 'customers', 'tickets', 'planner', 'highsites',
   'sectors', 'backhauls', 'finance', 'billing', 'debtors', 'reports', 'usage', 'surveys', 'workorders', 'inventory', 'scripts', 'settings'];

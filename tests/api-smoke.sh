@@ -7,8 +7,9 @@ PORT=28763
 SERVER_PID=""
 trap 'if [[ -n "$SERVER_PID" ]]; then kill "$SERVER_PID" 2>/dev/null || true; fi; rm -rf "$BASE"' EXIT
 
-mkdir -p "$BASE/public_html/netforge/api"
+mkdir -p "$BASE/public_html/netforge/api" "$BASE/public_html/netforge/portal"
 cp api/index.php "$BASE/public_html/netforge/api/index.php"
+cp portal/api.php "$BASE/public_html/netforge/portal/api.php"
 php -S "127.0.0.1:$PORT" -t "$BASE/public_html" > "$BASE/php-server.log" 2>&1 &
 SERVER_PID="$!"
 URL="http://127.0.0.1:$PORT/netforge/api/index.php"
@@ -153,5 +154,72 @@ test "$(value revision)" = "3"
 api PUT category=customers "{\"id\":\"$PARENT\",\"revision\":1,\"name\":\"Parent Company\",\"account\":\"CI-PARENT\",\"parent_customer_id\":\"$CUSTOMER\"}" 422
 api DELETE "category=customers&id=$PARENT" "" 409
 api PUT category=customers "{\"id\":\"$CUSTOMER\",\"revision\":3,\"name\":\"Alice Updated\",\"account\":\"CI-PARENT\",\"parent_customer_id\":\"$PARENT\",\"highsite_id\":\"$SITE\",\"sector_id\":\"$SECTOR\"}" 409
+
+
+# Subscriber portal: separate sessions, tenant isolation, customer messages and revoke.
+api POST action=portal_accounts "{\"operation\":\"create\",\"customer_id\":\"$CUSTOMER\",\"username\":\"CI-PORTAL\",\"password\":\"Portal-CI-Unique-Password-2026!\"}" 200
+test "$(value username)" = "CI-PORTAL"
+api GET action=portal_accounts "" 200
+if grep -q '"hash"' "$BASE/result.json"; then echo "Portal password hash exposed" >&2; exit 1; fi
+
+PURL="http://127.0.0.1:$PORT/netforge/portal/api.php"
+pstatus="$(curl -sS -D "$BASE/portal-headers" -o "$BASE/portal-result" -w '%{http_code}' \
+  -H 'Content-Type: application/json' -X POST "$PURL?action=login" \
+  --data '{"username":"CI-PORTAL","password":"Portal-CI-Unique-Password-2026!"}')"
+test "$pstatus" = "200"
+PSID="$(sed -n 's/^[Ss]et-[Cc]ookie: NFPORTALSESSID=\([^;]*\).*/\1/p' "$BASE/portal-headers" | tr -d '\r' | tail -n 1)"
+test -n "$PSID"
+PCS="$(php -r '$j=json_decode(file_get_contents($argv[1]),true);echo $j["csrf"]??"";' "$BASE/portal-result")"
+test -n "$PCS"
+
+papi() {
+  local method="$1" action="$2" payload="$3" expected="$4" status
+  if [[ "$method" = "GET" ]]; then
+    status="$(curl -sS -o "$BASE/portal-result" -w '%{http_code}' \
+      -H "Cookie: NFPORTALSESSID=$PSID" -X "$method" "$PURL?action=$action")"
+  else
+    status="$(curl -sS -o "$BASE/portal-result" -w '%{http_code}' \
+      -H "Cookie: NFPORTALSESSID=$PSID" -H "X-CSRF-Token: $PCS" \
+      -H 'Content-Type: application/json' -X "$method" "$PURL?action=$action" --data "$payload")"
+  fi
+  if [[ "$status" != "$expected" ]]; then
+    echo "Portal expected HTTP $expected, got $status for $method $action" >&2
+    cat "$BASE/portal-result" >&2
+    exit 1
+  fi
+}
+
+papi GET data "" 200
+grep -q 'CI-001' "$BASE/portal-result"
+if grep -q '192.0.2.10' "$BASE/portal-result"; then echo "Device management address exposed" >&2; exit 1; fi
+api POST category=ticket_messages "{\"name\":\"Public staff response\",\"ticket_id\":\"$TICKET\",\"visibility\":\"public\",\"body\":\"Public staff response\"}" 201
+api POST category=ticket_messages "{\"name\":\"Hidden staff note\",\"ticket_id\":\"$TICKET\",\"visibility\":\"internal\",\"body\":\"Internal private diagnosis - keep secret\"}" 201
+papi POST reply "{\"ticket_id\":\"$TICKET\",\"body\":\"Please advise when the link is restored\"}" 201
+papi GET data "" 200
+grep -q 'Public staff response' "$BASE/portal-result"
+grep -q 'Please advise when' "$BASE/portal-result"
+if grep -q 'Internal private diagnosis' "$BASE/portal-result"; then echo "Private staff note leaked" >&2; exit 1; fi
+
+api POST category=customers '{"name":"Second Customer","account":"CI-002","account_status":"active"}' 201
+OTHER="$(value id)"
+api POST category=tickets "{\"name\":\"Other account secret fault\",\"type\":\"customer\",\"customer_id\":\"$OTHER\",\"status\":\"open\"}" 201
+OTHER_TICKET="$(value id)"
+papi POST reply "{\"ticket_id\":\"$OTHER_TICKET\",\"body\":\"Unauthorized cross-customer reply\"}" 404
+papi GET data "" 200
+if grep -q 'Other account secret fault' "$BASE/portal-result"; then echo "Other customer data leaked" >&2; exit 1; fi
+
+papi POST ticket '{"name":"Subscriber support request","description":"Intermittent wireless service since yesterday"}' 201
+api GET category=tickets "" 200
+grep -q 'Subscriber support request' "$BASE/result.json"
+papi POST password '{"current_password":"Portal-CI-Unique-Password-2026!","new_password":"Portal-New-Long-Password-2026!"}' 200
+api POST action=portal_accounts "{\"operation\":\"reset\",\"customer_id\":\"$CUSTOMER\",\"password\":\"Admin-Reset-Long-Password-2026!\"}" 200
+papi GET data "" 401
+pstatus="$(curl -sS -o "$BASE/portal-result" -w '%{http_code}' -H 'Content-Type: application/json' \
+  -X POST "$PURL?action=login" --data '{"username":"CI-PORTAL","password":"Portal-New-Long-Password-2026!"}')"
+test "$pstatus" = "401"
+api POST action=portal_accounts "{\"operation\":\"disable\",\"customer_id\":\"$CUSTOMER\"}" 200
+pstatus="$(curl -sS -o "$BASE/portal-result" -w '%{http_code}' -H 'Content-Type: application/json' \
+  -X POST "$PURL?action=login" --data '{"username":"CI-PORTAL","password":"Admin-Reset-Long-Password-2026!"}')"
+test "$pstatus" = "401"
 
 echo "NetForge API smoke tests passed."
