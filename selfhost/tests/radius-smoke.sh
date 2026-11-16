@@ -48,4 +48,12 @@ grep -q 'Access-Reject' "$BASE/authfail"
 api "/services/$service/suspend" '{}'
 docker compose exec -T radius radtest rad-ci-user RadiusCiUserPassword2026 127.0.0.1 0 testing123 | tee "$BASE/authsuspend" || true
 grep -q 'Access-Reject' "$BASE/authsuspend"
-echo 'Real FreeRADIUS SQL PAP accept/reject tests passed.'
+# Verify that the bundled Caddy profile serves the application over HTTPS.
+docker compose --profile https up -d proxy
+for i in $(seq 1 30); do
+  if curl -kfsS --resolve netforge.localhost:8443:127.0.0.1 \
+      https://netforge.localhost:8443/ -o "$BASE/https.html" >/dev/null 2>&1; then break; fi
+  sleep 2
+done
+grep -q 'NetForge' "$BASE/https.html"
+echo 'FreeRADIUS authentication, suspension and Caddy HTTPS smoke tests passed.'
