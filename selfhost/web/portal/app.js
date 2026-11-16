@@ -54,9 +54,9 @@ function render(){
  }else if(state.view==='Services'){
   content.innerHTML='<h2>My subscriptions</h2>'+table(state.services,[['username','Connection login'],['package','Package'],['download_mbps','Download Mbps'],['upload_mbps','Upload Mbps'],['state','Status'],['created_at','Created']]);
  }else if(state.view==='Invoices'){
-  content.innerHTML='<h2>Invoices</h2>'+table(state.invoices.map(i=>({...i,total:zar(i.total),paid:zar(i.paid),outstanding:zar(i.outstanding)})),[['number','Invoice'],['period','Period'],['due_date','Due date'],['total','Amount'],['paid','Paid'],['outstanding','Outstanding'],['status','Status']]);
+  content.innerHTML='<h2>Invoices</h2>'+table(state.invoices.map(i=>({...i,total:zar(i.total),paid:zar(i.paid),credited:zar(i.credited),outstanding:zar(i.outstanding)})),[['number','Invoice'],['period','Period'],['due_date','Due date'],['total','Amount'],['paid','Paid'],['credited','Credited'],['outstanding','Outstanding'],['status','Status']]);
  }else if(state.view==='Payments'){
-  content.innerHTML='<h2>Recorded payments</h2>'+table(state.payments.map(p=>({...p,amount:zar(p.amount)})),[['invoice','Invoice'],['reference','Reference'],['amount','Amount'],['received_at','Received']]);
+  content.innerHTML='<h2>Recorded payments</h2>'+table(state.payments.map(p=>({...p,amount:zar(p.amount),reversed:p.reversed?'Yes':'No'})),[['invoice','Invoice'],['reference','Reference'],['amount','Amount'],['received_at','Received'],['reversed','Reversed']]);
  }else if(state.view==='Usage'){
   const now=new Date().toISOString().slice(0,7);
   content.innerHTML='<div class="toolbar"><h2>Data usage</h2><label>Month <input id="month" type="month" value="'+now+'"></label></div><div class="note">Usage is estimated from RADIUS accounting intervals. Historical data from before accounting capture and counter anomalies may not appear.</div><div id="usage-result" class="card">Loading…</div>';
