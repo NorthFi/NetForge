@@ -21,10 +21,12 @@ selfhost/
     ServiceLifecycle.cs
     CustomerPortal.cs
     UsageAccounting.cs
+    FinancialAccounting.cs
   db/
     001_init.sql
     002_radius_management.sql
     003_subscriber_portal_accounting.sql
+    004_financial_ledger_reconciliation.sql
   radius/
     Dockerfile
     entrypoint.sh
@@ -92,6 +94,22 @@ When a session disconnect request receives ACK, the NAS has acknowledged the req
 
 Complete operational details, security assumptions and validation constraints: [Customer portal and usage](selfhost/CUSTOMER_PORTAL_ACCOUNTING.md).
 
+## Phase 4: Financial posting and bank reconciliation
+
+This phase introduces transactional, ZAR-denominated double-entry postings and human-approved bank-statement reconciliation. See [Financial operations and safeguards](selfhost/FINANCIAL_OPERATIONS.md).
+
+- Invoice issuance creates **Dr Accounts Receivable / Cr Revenue** with an immutable journal.
+- Payments create **Dr Bank Clearing / Cr Accounts Receivable**, and reversals post a new, opposite journal rather than editing or deleting the original receipt.
+- Credit notes create **Dr Revenue Returns / Cr Accounts Receivable** and reduce the invoice outstanding balance. Credit notes cannot currently be reversed through the application; review them carefully before posting.
+- Invoices now distinguish `paid` (cash settlement) from `settled` (settlement involving an applied credit). Outstanding balances use payments **excluding reversals**, plus posted credits.
+- The **Bank Reconciliation** section supports a fixed, bank-neutral CSV: `Date,Amount,Description,Reference,TransactionId`. Upload for preview first, then explicitly import. The imported rows remain unmatched until an administrator allocates an incoming transaction to an issued invoice.
+- Each bank transaction is deduplicated using a bank label and its stable transaction ID. One incoming bank line may be allocated across several invoices but never beyond its available balance. Outgoing debits are imported for reference and cannot be allocated as customer payments.
+- Manual payment posting accepts an optional unique request ID; the UI supplies it, and repeating the same request does not create another payment. Manual postings also guard against duplicate references and amounts on the same invoice.
+- The **Financial Ledger** section displays the trial balance and source-tagged journal lines. Historical invoices/payments are imported once as clearly marked opening postings in migration `004`.
+- A posted credit or reversed payment affects the overdue-invoice policy through the same database `invoice_balances` view. **Automatic suspension remains opt-in and disabled by default.**
+
+**Scope limit:** This is an auditable foundation, **not a certified accounting or taxation system**. There is no VAT determination, valid South African tax-invoice PDF, bank API feed, gateway, refunds/chargebacks, multi-currency support, formal bank settlement or automatic matching. Validate controls with an accountant and test full backup/restore before using customer financial data.
+
 ## Current capabilities
 
 - Staff login with PBKDF2 password hashes, cookie authentication, role checks and request CSRF tokens.
@@ -102,7 +120,7 @@ Complete operational details, security assumptions and validation constraints: [
 - A separate FreeRADIUS 3.2 container using SQL tables `radcheck`, `radreply`, `nas`, `radacct`, and `radpostauth`.
 - Accounting history with active/unclosed session visibility, recorded usage intervals, UTC month estimates, and counter-reset anomaly detection.
 - Tickets with customer/site associations, type, priority and status, including public customer replies and internal-only support notes.
-- Basic invoices, monthly draft creation and payment recording with payment balance protection.
+- Invoices and manual monthly drafts, balanced financial postings, bank statement import/preview, manual reconciliation, credit notes and auditable payment reversals.
 - Auditing for key administrative changes.
 
 ## Critical RADIUS and billing semantics
@@ -112,7 +130,7 @@ Complete operational details, security assumptions and validation constraints: [
 - Suspending a customer or service adds a FreeRADIUS `Auth-Type := Reject` check item and retains the PPPoE password for later reactivation. It prevents **new authentication** but does **not** disconnect an existing PPPoE session. An administrator can disconnect an individual live session via an explicitly enabled NAS.
 - The session list shows unclosed accounting records, which may include stale sessions. The `recently_seen` indicator is based on the last 30 minutes.
 - MikroTik `Mikrotik-Rate-Limit` values default to subscriber upload/download (RouterOS receive/transmit); verify directionality with your service profiles and RouterOS version before onboarding.
-- Recurring invoice draft creation is **manual** and idempotent per customer and billing month. There is no tax, proration, payment gateway, credit ledger, SMS/email notification or legally compliant invoice PDF implementation yet.
+- Recurring invoice draft creation is **manual** and idempotent per customer and billing month. Ledger postings, payments, credits and reversals are implemented, but tax calculations, proration, payment gateways, SMS/email delivery, refunds and legally compliant invoice PDFs are not.
 - Do not expose the PostgreSQL port or the application management port directly to the public Internet.
 - Do not place RADIUS device shared secrets in tickets or notes. The NAS secret is displayed only at creation time and is stored in PostgreSQL for FreeRADIUS to use.
 
@@ -127,7 +145,7 @@ Set `Database__ConnectionString`, `NETFORGE_ADMIN_USER`, `NETFORGE_ADMIN_PASSWOR
 
 ## Current gaps versus full Splynx functionality
 
-Do **not** assume this is complete Splynx functionality. Missing major components include multi-factor customer and staff authentication, self-service payment gateways, true live-session CoA speed changes, large-scale NAS automation and comprehensive NAS lifecycle, automated payment gateways, prepaid vouchers, RADIUS usage-billing reconciliation, TR-069/USP ACS, SNMP telemetry/alerts, API token access, customer portal, backups and restore UI, VoIP CDR billing, automated technician dispatch, messaging gateways, stock procurement, contracts and quotations, complete audit and authorization policies, multi-tenant operations, and HA.
+Do **not** assume this is complete Splynx functionality. Missing major components include multi-factor customer and staff authentication, payment gateways and automatic bank feeds, automated invoicing with VAT/tax compliance, refunds, prepaid vouchers, usage-rating reconciliation, true live-session CoA speed changes, large-scale NAS automation, TR-069/USP ACS, SNMP monitoring and alerts, scoped API tokens, backup/restore UI, VoIP CDR billing, technician dispatch, notification gateways, procurement, customer contracts, granular RBAC, multi-tenant separation, and high availability.
 
 This branch **intentionally excludes the RF link planner**. It retains basic WISP highsite/sector/subscriber relationships and equipment records.
 
