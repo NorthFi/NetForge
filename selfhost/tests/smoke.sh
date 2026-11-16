@@ -274,7 +274,7 @@ FIN_INVOICE="$(id)"
 api POST "/invoices/$FIN_INVOICE/issue" '{}' 200
 FIN_REQUEST="$(python3 -c 'import uuid;print(uuid.uuid4())')"
 api POST /payments "{\"invoiceId\":\"$FIN_INVOICE\",\"amount\":100,\"reference\":\"FIN-TRANSFER-A\",\"requestId\":\"$FIN_REQUEST\"}" 200
-FIN_PAYMENT="$(value paymentId)"
+FIN_PAYMENT="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["paymentId"])' "$BASE/result.json")"
 api POST /payments "{\"invoiceId\":\"$FIN_INVOICE\",\"amount\":100,\"reference\":\"FIN-TRANSFER-A\",\"requestId\":\"$FIN_REQUEST\"}" 200
 grep -q '"replayed":true' "$BASE/result.json"
 api POST /payments "{\"invoiceId\":\"$FIN_INVOICE\",\"amount\":100,\"reference\":\"FIN-TRANSFER-A\"}" 409
