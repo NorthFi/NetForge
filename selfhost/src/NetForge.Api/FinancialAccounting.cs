@@ -165,9 +165,10 @@ public static class FinancialAccounting
             remaining=result.Remaining,requestId,replayed=false});
     }
 
-    public static async Task<IResult> ReversePayment(Guid paymentId,
+    public static async Task<IResult> ReversePayment(Guid id,
         HttpContext ctx,NpgsqlDataSource db,PaymentReversalInput input)
     {
+        var paymentId=id;
         if(!Admin(ctx))return Forbidden();
         if(input.RequestId==Guid.Empty || (input.Reason??"").Trim().Length is < 8 or > 300)
             return Results.BadRequest(new{error="Unique request ID and reversal reason (8–300 characters) required"});
@@ -359,8 +360,9 @@ public static class FinancialAccounting
     }
 
     public static async Task<IResult> Allocate(
-        Guid bankLineId,HttpContext ctx,NpgsqlDataSource db,BankAllocationInput input)
+        Guid id,HttpContext ctx,NpgsqlDataSource db,BankAllocationInput input)
     {
+        var bankLineId=id;
         if(!Admin(ctx))return Forbidden();
         if(input.RequestId==Guid.Empty || input.Amount<=0 ||
            input.Amount>9999999999.99m || input.Amount!=decimal.Round(input.Amount,2))
