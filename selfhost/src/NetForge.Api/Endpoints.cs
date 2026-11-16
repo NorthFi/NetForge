@@ -63,7 +63,7 @@ public static class Endpoints
                 return Invalid("Username, strong password and recognized role required");
             var id=await Store.Insert(db,
                 "INSERT INTO app_users(username,password_hash,role) VALUES (@u,@p,@r) RETURNING id",
-                Store.P("u",body.Username.Trim()),Store.P("p",Passwords.Hash(body.Password)),
+                Store.P("u",body.Username.Trim()),Store.P("p",Passwords.Hash(body.Password!)),
                 Store.P("r",body.Role));
             await Store.Audit(db,Actor(ctx),"create","staff",id.ToString());
             return Results.Created($"/api/staff/{id}",new {id});
@@ -266,9 +266,9 @@ public static class Endpoints
                 """,Store.P("id",id));
             if(rows.Count==0)return Results.NotFound();
             var service=rows[0];
-            if((string)Value(service,"customer_status")!="active")
+            if((Value(service,"customer_status") as string)!="active")
                 return Invalid("Customer must be active before provisioning RADIUS");
-            if((string)Value(service,"state")=="cancelled")
+            if((Value(service,"state") as string)=="cancelled")
                 return Invalid("Cancelled services cannot be reactivated");
             var username=(string)Value(service,"username")!;
             await ExecTx(conn,(NpgsqlTransaction)tx,
@@ -338,10 +338,10 @@ public static class Endpoints
                 INSERT INTO nas(nasname,shortname,type,secret,description)
                 VALUES(@address,@name,'other',@secret,@description) RETURNING id
                 """,conn);
-            cmd.Parameters.AddRange([
+            cmd.Parameters.AddRange(new NpgsqlParameter[] {
                 Store.P("address",body.Address),Store.P("name",body.Name),
                 Store.P("secret",body.Secret),Store.P("description",body.Description??"")
-            ]);
+            });
             var id=await cmd.ExecuteScalarAsync();
             await Store.Audit(db,Actor(ctx),"create","nas",id?.ToString()??"");
             return Results.Created("/api/radius/nas",new{id,restartRequired=true,
