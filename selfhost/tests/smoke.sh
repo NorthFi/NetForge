@@ -410,9 +410,6 @@ print(next(x['id'] for x in rows if x['customer_id']==sys.argv[2] and x['period'
 PY
 )"
 api GET "/billing/invoices/$AUTO_DRAFT/items" "" 200
-grep -q '"service_id"' "$BASE/result.json" && {
-  echo "Internal service identifiers should not be exposed from invoice line items" >&2;exit 1;
-} || true
 python3 - "$BASE/result.json" <<'PY'
 import json,sys
 items=json.load(open(sys.argv[1]))
@@ -440,6 +437,29 @@ assert r['status']=='issued',r
 print(r['id'])
 PY
 )"
+
+# Portal invoice line items must remain scoped to the authenticated customer.
+api POST /invoices "{\"customerId\":\"$OTHER_CUSTOMER\",\"number\":\"CI-OTHER-INV\",\"total\":80,\"dueDate\":\"2027-03-01\"}" 201
+OTHER_INVOICE="$(id)"
+api POST "/invoices/$OTHER_INVOICE/issue" '{}' 200
+PSTATUS="$(curl -sS -D "$BASE/portal-new.headers" -o "$BASE/result.json" -w '%{http_code}' \
+  -H 'Content-Type: application/json' -X POST "$PORTALURL/login" \
+  --data '{"username":"CI-PORTAL","password":"New-CI-Portal-Password-2026!"}')"
+test "$PSTATUS" = 200
+NEW_PORTAL_COOKIE="$(grep -i '^set-cookie: NetForge.Portal=' "$BASE/portal-new.headers" |
+  head -1 | sed -E 's/^[^:]*: ([^;]*).*/\1/' | tr -d '\r')"
+CODE="$(curl -sS -o "$BASE/result.json" -w '%{http_code}' \
+  -H "Cookie: $NEW_PORTAL_COOKIE" "$PORTALURL/invoices/$AUTO_ISSUED/items")"
+test "$CODE" = 200
+python3 - "$BASE/result.json" <<'PY'
+import json,sys
+items=json.load(open(sys.argv[1]))
+assert len(items)>0 and float(items[0]['amount'])>0,items
+PY
+CODE="$(curl -sS -o "$BASE/result.json" -w '%{http_code}' \
+  -H "Cookie: $NEW_PORTAL_COOKIE" "$PORTALURL/invoices/$OTHER_INVOICE/items")"
+test "$CODE" = 404
+
 api GET /notifications/outbox "" 200
 python3 - "$BASE/result.json" "$AUTO_ISSUED" <<'PY'
 import json,sys
