@@ -197,7 +197,7 @@ public static class FinancialAccounting
             INSERT INTO payment_reversals(id,payment_id,request_id,reason,reversed_by)
             VALUES(@id,@payment,@request,@reason,@actor)
             """,P("id",reversal),P("payment",paymentId),P("request",input.RequestId),
-            P("reason",input.Reason.Trim()),P("actor",Actor(ctx)));
+            P("reason",input.Reason!.Trim()),P("actor",Actor(ctx)));
         await Journal(conn,(NpgsqlTransaction)tx,"payment_reversal",reversal,
             "Reversal of payment "+paymentId,Actor(ctx),"AR","BANK_CLEARING",amount);
         var remaining=await RefreshStatus(conn,(NpgsqlTransaction)tx,invoiceId);
