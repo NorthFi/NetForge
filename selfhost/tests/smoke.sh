@@ -290,7 +290,7 @@ PY
 BANK_PREVIEW="$(python3 - <<'PY'
 import json
 print(json.dumps({"bankName":"CI-FNB","filename":"ci-statement.csv",
-"csv":"Date,Amount,Description,Reference,TransactionId\n2026-11-16,200.00,Client EFT,CI-001,CI-BANK-01\n2026-11-16,-25.00,Bank charge,CHARGE,CI-BANK-02\n2026-11-16,200.00,Duplicate,CI-001,CI-BANK-01\n",
+"csv":"Date,Amount,Description,Reference,TransactionId\n2026-11-16,200.00,Client EFT,CI-001,CI-BANK-01\n2026-11-16,-25.00,Bank charge,CHARGE,CI-BANK-02\n2026-11-16,200.00,Client EFT,CI-001,CI-BANK-01\n",
 "confirm":False}))
 PY
 )"
@@ -306,6 +306,7 @@ api POST /billing/bank-imports "$BANK_IMPORT" 200
 grep -q '"imported":2' "$BASE/result.json"
 api POST /billing/bank-imports "$BANK_IMPORT" 200
 grep -q '"imported":0' "$BASE/result.json"
+api POST /billing/bank-imports '{"bankName":"CI-FNB","filename":"changed-statement.csv","confirm":true,"csv":"Date,Amount,Description,Reference,TransactionId\n2026-11-16,999.00,Changed bank credit,CI-001,CI-BANK-01\n"}' 409
 api GET /billing/bank-lines "" 200
 BANK_LINE="$(python3 - "$BASE/result.json" <<'PY'
 import json,sys
