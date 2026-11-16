@@ -266,4 +266,110 @@ assert r['upload_bytes']==2147483648,r
 assert r['observed_intervals']==2,r
 PY
 
+
+# Financial journal invariants, idempotent payment posting, credit notes and
+# manually reviewed bank statement reconciliation.
+api POST /invoices "{\"customerId\":\"$CUSTOMER\",\"number\":\"CI-FIN-300\",\"total\":300,\"dueDate\":\"2026-12-10\"}" 201
+FIN_INVOICE="$(id)"
+api POST "/invoices/$FIN_INVOICE/issue" '{}' 200
+FIN_REQUEST="$(python3 -c 'import uuid;print(uuid.uuid4())')"
+api POST /payments "{\"invoiceId\":\"$FIN_INVOICE\",\"amount\":100,\"reference\":\"FIN-TRANSFER-A\",\"requestId\":\"$FIN_REQUEST\"}" 200
+FIN_PAYMENT="$(value paymentId)"
+api POST /payments "{\"invoiceId\":\"$FIN_INVOICE\",\"amount\":100,\"reference\":\"FIN-TRANSFER-A\",\"requestId\":\"$FIN_REQUEST\"}" 200
+grep -q '"replayed":true' "$BASE/result.json"
+api POST /payments "{\"invoiceId\":\"$FIN_INVOICE\",\"amount\":100,\"reference\":\"FIN-TRANSFER-A\"}" 409
+api POST /billing/credits "{\"invoiceId\":\"$FIN_INVOICE\",\"number\":\"CI-CREDIT-50\",\"amount\":50,\"reason\":\"Compensation for service outage\"}" 201
+api GET /invoices "" 200
+python3 - "$BASE/result.json" "$FIN_INVOICE" <<'PY'
+import json,sys
+row=next(x for x in json.load(open(sys.argv[1])) if x['id']==sys.argv[2])
+assert float(row['paid'])==100,row
+assert float(row['credited'])==50,row
+assert float(row['outstanding'])==150,row
+PY
+BANK_PREVIEW="$(python3 - <<'PY'
+import json
+print(json.dumps({"bankName":"CI-FNB","filename":"ci-statement.csv",
+"csv":"Date,Amount,Description,Reference,TransactionId\\n2026-11-16,200.00,Client EFT,CI-001,CI-BANK-01\\n2026-11-16,-25.00,Bank charge,CHARGE,CI-BANK-02\\n2026-11-16,200.00,Duplicate,CI-001,CI-BANK-01\\n",
+"confirm":False}))
+PY
+)"
+api POST /billing/bank-imports/preview "$BANK_PREVIEW" 200
+grep -q '"duplicateCount":1' "$BASE/result.json"
+BANK_IMPORT="$(python3 - "$BANK_PREVIEW" <<'PY'
+import json,sys
+b=json.loads(sys.argv[1]);b['confirm']=True
+print(json.dumps(b))
+PY
+)"
+api POST /billing/bank-imports "$BANK_IMPORT" 200
+grep -q '"imported":2' "$BASE/result.json"
+api POST /billing/bank-imports "$BANK_IMPORT" 200
+grep -q '"imported":0' "$BASE/result.json"
+api GET /billing/bank-lines "" 200
+BANK_LINE="$(python3 - "$BASE/result.json" <<'PY'
+import json,sys
+rows=json.load(open(sys.argv[1]))
+print(next(x['id'] for x in rows if x['transaction_id']=='CI-BANK-01'))
+PY
+)"
+BANK_ALLOC_REQUEST="$(python3 -c 'import uuid;print(uuid.uuid4())')"
+api POST "/billing/bank-lines/$BANK_LINE/allocate" "{\"invoiceId\":\"$FIN_INVOICE\",\"amount\":150,\"requestId\":\"$BANK_ALLOC_REQUEST\"}" 200
+api POST "/billing/bank-lines/$BANK_LINE/allocate" "{\"invoiceId\":\"$FIN_INVOICE\",\"amount\":150,\"requestId\":\"$BANK_ALLOC_REQUEST\"}" 200
+grep -q '"replayed":true' "$BASE/result.json"
+api GET /invoices "" 200
+python3 - "$BASE/result.json" "$FIN_INVOICE" <<'PY'
+import json,sys
+x=next(r for r in json.load(open(sys.argv[1])) if r['id']==sys.argv[2])
+assert x['status']=='settled',x
+assert float(x['outstanding'])==0,x
+assert float(x['paid'])==250,x
+assert float(x['credited'])==50,x
+PY
+api POST /invoices "{\"customerId\":\"$CUSTOMER\",\"number\":\"CI-FIN-SPLIT\",\"total\":60,\"dueDate\":\"2026-12-10\"}" 201
+SPLIT_INVOICE="$(id)"
+api POST "/invoices/$SPLIT_INVOICE/issue" '{}' 200
+api POST "/billing/bank-lines/$BANK_LINE/allocate" "{\"invoiceId\":\"$SPLIT_INVOICE\",\"amount\":51,\"requestId\":\"$(python3 -c 'import uuid;print(uuid.uuid4())')\"}" 409
+api POST "/billing/bank-lines/$BANK_LINE/allocate" "{\"invoiceId\":\"$SPLIT_INVOICE\",\"amount\":50,\"requestId\":\"$(python3 -c 'import uuid;print(uuid.uuid4())')\"}" 200
+grep -q '"bankRemaining":0' "$BASE/result.json"
+api GET /billing/bank-lines "" 200
+python3 - "$BASE/result.json" <<'PY'
+import json,sys
+row=next(x for x in json.load(open(sys.argv[1])) if x['transaction_id']=='CI-BANK-01')
+assert float(row['allocated'])==200,row
+assert float(row['available'])==0,row
+PY
+FIN_REVERSAL="$(python3 -c 'import uuid;print(uuid.uuid4())')"
+api POST "/billing/payments/$FIN_PAYMENT/reverse" "{\"requestId\":\"$FIN_REVERSAL\",\"reason\":\"Confirmed bank payment reversal\"}" 200
+api POST "/billing/payments/$FIN_PAYMENT/reverse" "{\"requestId\":\"$FIN_REVERSAL\",\"reason\":\"Confirmed bank payment reversal\"}" 200
+grep -q '"replayed":true' "$BASE/result.json"
+api GET /invoices "" 200
+python3 - "$BASE/result.json" "$FIN_INVOICE" <<'PY'
+import json,sys
+x=next(r for r in json.load(open(sys.argv[1])) if r['id']==sys.argv[2])
+assert x['status']=='issued',x
+assert float(x['paid'])==150,x
+assert float(x['credited'])==50,x
+assert float(x['outstanding'])==100,x
+PY
+api GET /billing/trial-balance "" 200
+python3 - "$BASE/result.json" <<'PY'
+import json,sys
+rows=json.load(open(sys.argv[1]))
+debit=sum(round(float(x['debit'])*100) for x in rows)
+credit=sum(round(float(x['credit'])*100) for x in rows)
+assert debit==credit,(debit,credit)
+PY
+api GET /billing/ledger "" 200
+grep -q 'payment_reversal' "$BASE/result.json"
+api GET /billing/credits "" 200
+grep -q 'CI-CREDIT-50' "$BASE/result.json"
+api GET /billing/payments "" 200
+grep -q '"reversal_id"' "$BASE/result.json"
+# The database must refuse any mutation of existing journal lines.
+if docker exec "$PGCONTAINER" psql -U netforge_ci -d netforge_ci -v ON_ERROR_STOP=1 \
+  -c "UPDATE ledger_lines SET debit=1 WHERE line_no=1" >/dev/null 2>&1; then
+  echo "Immutable journal was edited"; exit 1
+fi
+
 echo "NetForge .NET 11 / PostgreSQL API smoke passed."
