@@ -435,7 +435,7 @@ public static class Endpoints
             // Customer/month uniqueness prevents double billing. No automatic issuance.
             var invoiceRows=await Store.Rows(db,"""
                 INSERT INTO invoices(customer_id,number,period,total,due_date)
-                SELECT s.customer_id,'NF-'+to_char(@period::date,'YYYYMM')+'-'+s.customer_id::text,
+                SELECT s.customer_id,'NF-'||to_char(@period::date,'YYYYMM')||'-'||s.customer_id::text,
                        @period::date,sum(p.monthly_price),(@period::date+interval '7 days')::date
                 FROM services s JOIN customers c ON c.id=s.customer_id
                 JOIN packages p ON p.id=s.package_id
