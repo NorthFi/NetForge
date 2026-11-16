@@ -102,12 +102,12 @@ public static class NetworkManagement
             // an administrator-approved SQL NAS entry.
             var rows=await Store.Rows(pool,"""
                 SELECT a.radacctid,a.username,a.acctsessionid,
-                       a.nasipaddress::text AS nas_ip,a.acctupdatetime,
+                       host(a.nasipaddress) AS nas_ip,a.acctupdatetime,
                        n.id AS nas_id,n.secret,n.nasname,
                        COALESCE(m.disconnect_port,1700) AS disconnect_port,
                        COALESCE(m.disconnect_enabled,false) AS disconnect_enabled
                 FROM radacct a
-                JOIN nas n ON n.nasname=a.nasipaddress::text
+                JOIN nas n ON n.nasname=host(a.nasipaddress)
                 LEFT JOIN nas_management m ON m.nas_id=n.id
                 JOIN services s ON s.username=a.username
                 WHERE a.radacctid=@id AND a.acctstoptime IS NULL
