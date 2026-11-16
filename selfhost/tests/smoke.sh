@@ -170,6 +170,25 @@ PORTAL_COOKIE="$(grep -i '^set-cookie: NetForge.Portal=' "$BASE/portal.headers" 
 PORTAL_CSRF="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["csrf"])' "$BASE/result.json")"
 test -n "$PORTAL_COOKIE"
 test -n "$PORTAL_CSRF"
+api POST /customers '{"account":"CI-ISOLATED-B","firstName":"Second","surname":"Customer","email":"","phone":"","address":"","status":"active","branchId":null,"highsiteId":null,"sectorId":null}' 201
+OTHER_CUSTOMER="$(id)"
+api POST /tickets "{\"customerId\":\"$OTHER_CUSTOMER\",\"highsiteId\":null,\"subject\":\"Other customer confidential outage\",\"description\":\"Private second account details\",\"type\":\"customer\",\"priority\":\"normal\"}" 201
+OTHER_TICKET="$(id)"
+CODE="$(curl -sS -o "$BASE/result.json" -w '%{http_code}' \
+ -H "Cookie: $PORTAL_COOKIE" "$PORTALURL/tickets")"
+test "$CODE" = 200
+if grep -q 'Other customer confidential outage' "$BASE/result.json"; then
+ echo "Cross-customer ticket leaked"; exit 1
+fi
+CODE="$(curl -sS -o "$BASE/result.json" -w '%{http_code}' \
+ -H "Cookie: $PORTAL_COOKIE" "$PORTALURL/tickets/$OTHER_TICKET/messages")"
+test "$CODE" = 404
+CODE="$(curl -sS -o "$BASE/result.json" -w '%{http_code}' -X POST \
+ -H "Cookie: $PORTAL_COOKIE" -H "X-CSRF-Token: $PORTAL_CSRF" \
+ -H 'Content-Type: application/json' \
+ --data '{"subject":"Subscriber portal ticket","description":"Customer portal support request"}' \
+ "$PORTALURL/tickets")"
+test "$CODE" = 201
 CODE="$(curl -sS -o "$BASE/result.json" -w '%{http_code}' \
   -H "Cookie: $PORTAL_COOKIE" "$PORTALURL/profile")"
 test "$CODE" = 200
@@ -191,6 +210,13 @@ test "$CODE" = 401
 api PUT "/customer-portal/accounts/$CUSTOMER" '{"action":"disable"}' 200
 CODE="$(curl -sS -o "$BASE/result.json" -w '%{http_code}' \
   -H "Cookie: $PORTAL_COOKIE" "$PORTALURL/profile")"
+test "$CODE" = 401
+api PUT "/customer-portal/accounts/$CUSTOMER" '{"action":"enable"}' 200
+api PUT "/customer-portal/accounts/$CUSTOMER" '{"action":"reset","password":"New-CI-Portal-Password-2026!"}' 200
+CODE="$(curl -sS -o "$BASE/result.json" -w '%{http_code}' -X POST \
+ -H 'Content-Type: application/json' \
+ --data '{"username":"CI-PORTAL","password":"CI-Customer-Portal-Password-2026"}' \
+ "$PORTALURL/login")"
 test "$CODE" = 401
 
 
