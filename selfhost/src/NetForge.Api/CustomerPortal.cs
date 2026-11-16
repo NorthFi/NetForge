@@ -254,6 +254,21 @@ public static class CustomerPortal
                 ORDER BY i.created_at DESC LIMIT 500
                 """,Store.P("id",Customer(user)))));
 
+        group.MapGet("/invoices/{id:guid}/items",async(Guid id,ClaimsPrincipal user,
+            NpgsqlDataSource db)=>
+        {
+            var customerId=Customer(user);
+            var issued=await Store.Rows(db,"""
+                SELECT id FROM invoices WHERE id=@id AND customer_id=@customer
+                    AND status IN ('issued','paid','settled')
+                """,Store.P("id",id),Store.P("customer",customerId));
+            if(issued.Count==0)return Results.NotFound();
+            return Results.Ok(await Store.Rows(db,"""
+                SELECT description,quantity,unit_price,amount
+                FROM invoice_items WHERE invoice_id=@id ORDER BY id
+                """,Store.P("id",id)));
+        });
+
         group.MapGet("/payments",async(ClaimsPrincipal user,NpgsqlDataSource db)=>
             Results.Ok(await Store.Rows(db,"""
                 SELECT p.id,p.amount,p.reference,p.received_at,i.number AS invoice,

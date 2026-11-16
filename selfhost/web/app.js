@@ -515,6 +515,15 @@ function details(collection,r){
  }
  if(collection==='invoices'&&role==='admin'&&r.status==='draft')
   btn('Issue invoice',()=>{if(confirm('Issue invoice '+r.number+'?'))run('/invoices/'+r.id+'/issue')});
+ if(collection==='invoices'){
+  btn('Invoice line items',async()=>{
+   try{
+    const rows=await api('/billing/invoices/'+r.id+'/items');
+    const d2=dialog('<h2>Invoice '+esc(r.number)+' — subscription items</h2><div class="tablewrap"><table><thead><tr><th>Service</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>'+rows.map(x=>'<tr><td>'+esc(x.description)+'</td><td>'+esc(x.quantity)+'</td><td>'+esc(money(x.unit_price))+'</td><td>'+esc(money(x.amount))+'</td></tr>').join('')+'</tbody></table></div>'+(rows.length?'':'<p class="note">No captured subscription items for this legacy/manual invoice.</p>')+'<button id="dismiss">Close</button>');
+    d2.querySelector('#dismiss').onclick=()=>d2.close();
+   }catch(e){d.querySelector('#actionerror').textContent=e.message}
+  });
+ }
  if(collection==='invoices'&&role==='admin'&&r.status==='issued')
   btn('Record payment',()=>{d.close();payment(r)});
  if(collection==='invoices'&&role==='admin'&&r.status==='issued'&&Number(r.outstanding)>0)

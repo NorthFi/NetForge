@@ -54,7 +54,8 @@ function render(){
  }else if(state.view==='Services'){
   content.innerHTML='<h2>My subscriptions</h2>'+table(state.services,[['username','Connection login'],['package','Package'],['download_mbps','Download Mbps'],['upload_mbps','Upload Mbps'],['state','Status'],['created_at','Created']]);
  }else if(state.view==='Invoices'){
-  content.innerHTML='<h2>Invoices</h2>'+table(state.invoices.map(i=>({...i,total:zar(i.total),paid:zar(i.paid),credited:zar(i.credited),outstanding:zar(i.outstanding)})),[['number','Invoice'],['period','Period'],['due_date','Due date'],['total','Amount'],['paid','Paid'],['credited','Credited'],['outstanding','Outstanding'],['status','Status']]);
+  content.innerHTML='<h2>Invoices</h2>'+table(state.invoices.map(i=>({...i,total:zar(i.total),paid:zar(i.paid),credited:zar(i.credited),outstanding:zar(i.outstanding)})),[['number','Invoice'],['period','Period'],['due_date','Due date'],['total','Amount'],['paid','Paid'],['credited','Credited'],['outstanding','Outstanding'],['status','Status']],true);
+  content.querySelectorAll('tr[data-ticket]').forEach(row=>row.onclick=()=>openInvoice(row.dataset.ticket));
  }else if(state.view==='Payments'){
   content.innerHTML='<h2>Recorded payments</h2>'+table(state.payments.map(p=>({...p,amount:zar(p.amount),reversed:p.reversed?'Yes':'No'})),[['invoice','Invoice'],['reference','Reference'],['amount','Amount'],['received_at','Received'],['reversed','Reversed']]);
  }else if(state.view==='Usage'){
@@ -82,6 +83,15 @@ function render(){
  }
 }
 function dialog(html){const d=document.createElement('dialog');d.innerHTML=html;document.body.append(d);d.onclose=()=>d.remove();d.showModal();return d}
+async function openInvoice(id){
+ const invoice=state.invoices.find(i=>i.id===id);
+ if(!invoice)return;
+ try{
+  const items=await request('/invoices/'+id+'/items');
+  const d=dialog('<div class="toolbar"><h2>Invoice '+esc(invoice.number)+'</h2><button id="close">Close</button></div><p class="muted">Status: '+esc(invoice.status)+' · Total: '+esc(zar(invoice.total))+' · Paid: '+esc(zar(invoice.paid))+' · Credits: '+esc(zar(invoice.credited))+' · Outstanding: '+esc(zar(invoice.outstanding))+'</p><h3>Subscription line items</h3>'+(items.length?'<div class="tablewrap"><table><thead><tr><th>Service</th><th>Quantity</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>'+items.map(x=>'<tr><td>'+esc(x.description)+'</td><td>'+esc(x.quantity)+'</td><td>'+esc(zar(x.unit_price))+'</td><td>'+esc(zar(x.amount))+'</td></tr>').join('')+'</tbody></table></div>':'<p class="note">Detailed itemization is unavailable for manually entered or legacy invoices.</p>'));
+  d.querySelector('#close').onclick=()=>d.close();
+ }catch(e){alert(e.message)}
+}
 function newTicket(){
  const d=dialog('<div class="toolbar"><h2>Open support ticket</h2><button type="button" id="cancel">Close</button></div><form id="form"><label>Subject</label><input name="subject" minlength="4" maxlength="200" required><label>Describe the problem</label><textarea class="tall" name="description" minlength="5" maxlength="3000" required></textarea><p class="error" id="message"></p><button class="primary">Submit ticket</button></form>');
  d.querySelector('#cancel').onclick=()=>d.close();
