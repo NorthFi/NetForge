@@ -41,6 +41,9 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
     .AddCookie(CustomerPortal.Scheme,CustomerPortal.ConfigureCookie);
 builder.Services.AddAuthorization();
 builder.Services.AddHostedService<BillingEnforcementWorker>();
+builder.Services.AddHostedService<MonthlyBillingWorker>();
+builder.Services.AddHostedService<NotificationWorker>();
+builder.Services.AddHostedService<MonitoringWorker>();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
@@ -155,6 +158,9 @@ NetworkManagement.Map(authorized);
 ServiceLifecycle.Map(authorized);
 CustomerPortal.MapStaff(authorized);
 FinancialAccounting.Map(authorized);
+BillingScheduler.Map(authorized);
+Notifications.Map(authorized);
+NetworkMonitoring.Map(authorized);
 UsageAccounting.MapStaff(authorized);
 CustomerPortal.MapPortal(app);
 app.MapFallbackToFile("index.html");
