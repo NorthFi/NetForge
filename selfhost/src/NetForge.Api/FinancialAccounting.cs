@@ -326,6 +326,36 @@ public static class FinancialAccounting
         catch(ArgumentException e){return Results.BadRequest(new{error=e.Message});}
         await using var conn=await db.OpenConnectionAsync();
         await using var tx=await conn.BeginTransactionAsync();
+        // Serialize statement uploads for the same bank label, then reject
+        // changed transaction details instead of silently accepting conflicts.
+        await Rows(conn,(NpgsqlTransaction)tx,
+            "SELECT pg_advisory_xact_lock(9840,hashtext(@bank)) AS acquired",
+            P("bank",input.BankName.Trim()));
+        foreach(var grouping in rows.GroupBy(x=>x.TransactionId,StringComparer.Ordinal))
+        {
+            if(grouping.Distinct().Count()>1)
+                return Results.Conflict(new{error=
+                    "CSV contains conflicting values for transaction ID "+grouping.Key});
+        }
+        var priorLines=await Rows(conn,(NpgsqlTransaction)tx,"""
+            SELECT transaction_id,value_date,amount,description,reference
+            FROM bank_statement_lines
+            WHERE bank_name=@bank AND transaction_id=ANY(@ids)
+            """,P("bank",input.BankName.Trim()),
+            P("ids",rows.Select(x=>x.TransactionId).ToArray()));
+        var existing=priorLines.ToDictionary(x=>(string)x["transaction_id"]!,
+            StringComparer.Ordinal);
+        foreach(var incoming in rows)
+        {
+            if(!existing.TryGetValue(incoming.TransactionId,out var previous))continue;
+            if((DateOnly)previous["value_date"]! != incoming.Date ||
+               (decimal)previous["amount"]! != incoming.Amount ||
+               (string)previous["description"]! != incoming.Description ||
+               (string)previous["reference"]! != incoming.Reference)
+                return Results.Conflict(new{error=
+                    "Previously imported transaction ID "+incoming.TransactionId+
+                    " has different date, amount or reference; resolve it against the bank statement"});
+        }
         var batch=Guid.NewGuid();
         await Exec(conn,(NpgsqlTransaction)tx,"""
             INSERT INTO bank_import_batches(id,bank_name,filename,imported_by)
