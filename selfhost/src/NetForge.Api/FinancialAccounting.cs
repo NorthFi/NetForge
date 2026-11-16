@@ -29,7 +29,7 @@ public static class FinancialAccounting
         params NpgsqlParameter[] values) =>
         NetworkManagement.Execute(c,tx,sql,values);
 
-    private static async Task Journal(NpgsqlConnection conn,NpgsqlTransaction tx,
+    internal static async Task PostJournal(NpgsqlConnection conn,NpgsqlTransaction tx,
         string type,Guid source,string memo,string actor,string debitAccount,string creditAccount,
         decimal amount)
     {
@@ -93,9 +93,10 @@ public static class FinancialAccounting
             "UPDATE invoices SET status=@status WHERE id=@id",
             P("status",total==0?"settled":"issued"),P("id",id));
         if(total>0)
-            await Journal(conn,(NpgsqlTransaction)tx,"invoice",id,
+            await PostJournal(conn,(NpgsqlTransaction)tx,"invoice",id,
                 "Issued invoice "+invoice["number"],Actor(ctx),
                 "AR","REVENUE",total);
+        await Notifications.EnqueueInvoice(conn,(NpgsqlTransaction)tx,id);
         await Audit(conn,(NpgsqlTransaction)tx,Actor(ctx),"invoice-issue","invoice",id.ToString());
         await tx.CommitAsync();
         return Results.Ok(new{ok=true,status=total==0?"settled":"issued"});
@@ -111,7 +112,7 @@ public static class FinancialAccounting
             VALUES(@id,@invoice,@amount,@reference,@request,@line)
             """,P("id",id),P("invoice",invoiceId),P("amount",amount),
             P("reference",reference),P("request",requestId),P("line",bankLineId));
-        await Journal(conn,tx,"payment",id,"Payment "+reference,actor,
+        await PostJournal(conn,tx,"payment",id,"Payment "+reference,actor,
             "BANK_CLEARING","AR",amount);
         var remaining=await RefreshStatus(conn,tx,invoiceId);
         await Audit(conn,tx,actor,bankLineId is null?"payment-manual":"payment-bank-allocated",
@@ -199,7 +200,7 @@ public static class FinancialAccounting
             VALUES(@id,@payment,@request,@reason,@actor)
             """,P("id",reversal),P("payment",paymentId),P("request",input.RequestId),
             P("reason",input.Reason!.Trim()),P("actor",Actor(ctx)));
-        await Journal(conn,(NpgsqlTransaction)tx,"payment_reversal",reversal,
+        await PostJournal(conn,(NpgsqlTransaction)tx,"payment_reversal",reversal,
             "Reversal of payment "+paymentId,Actor(ctx),"AR","BANK_CLEARING",amount);
         var remaining=await RefreshStatus(conn,(NpgsqlTransaction)tx,invoiceId);
         await Audit(conn,(NpgsqlTransaction)tx,Actor(ctx),"payment-reverse",
@@ -233,7 +234,7 @@ public static class FinancialAccounting
             VALUES(@id,@invoice,@number,@amount,@reason,@actor)
             """,P("id",creditId),P("invoice",input.InvoiceId),P("number",number),
             P("amount",input.Amount),P("reason",reason),P("actor",Actor(ctx)));
-        await Journal(conn,(NpgsqlTransaction)tx,"credit_note",creditId,
+        await PostJournal(conn,(NpgsqlTransaction)tx,"credit_note",creditId,
             "Credit note "+number,Actor(ctx),"REVENUE_RETURNS","AR",input.Amount);
         var remaining=await RefreshStatus(conn,(NpgsqlTransaction)tx,input.InvoiceId);
         await Audit(conn,(NpgsqlTransaction)tx,Actor(ctx),"credit-note",
