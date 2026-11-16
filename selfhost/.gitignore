@@ -1,0 +1,6 @@
+# root/selfhost/.gitignore
+.env
+**/bin/
+**/obj/
+**/.vs/
+*.user

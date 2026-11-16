@@ -1,0 +1,13 @@
+<!-- root/selfhost/src/NetForge.Api/NetForge.Api.csproj -->
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup><PackageReference Include="Npgsql" Version="10.0.3" /></ItemGroup>
+  <ItemGroup><Content Include="../../db/001_init.sql" Link="db/001_init.sql" CopyToOutputDirectory="Always" /></ItemGroup>
+  <ItemGroup><Content Include="../../web/**" Link="wwwroot/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="Always" /></ItemGroup>
+</Project>
