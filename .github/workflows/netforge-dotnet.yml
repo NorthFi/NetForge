@@ -13,6 +13,20 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: netforge_ci
+          POSTGRES_PASSWORD: netforge_test_very_strong_secret
+          POSTGRES_DB: netforge_ci
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U netforge_ci -d netforge_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -32,3 +46,5 @@ jobs:
           docker compose config --quiet
       - name: Build publish output
         run: dotnet publish selfhost/src/NetForge.Api/NetForge.Api.csproj -c Release -o /tmp/netforge-publish --no-restore
+      - name: Integration test with PostgreSQL 17
+        run: bash selfhost/tests/smoke.sh
