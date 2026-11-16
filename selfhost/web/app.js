@@ -2,7 +2,7 @@
 'use strict';
 const root=document.querySelector('#root'),identity=document.querySelector('#identity'),logout=document.querySelector('#logout');
 let csrf='',role='',username='',tab='Dashboard',data={};
-const views=['Dashboard','Customers','Services','Packages','Highsites','Sectors','Equipment','RADIUS NAS','RADIUS Sessions','Tickets','Billing','Staff'];
+const views=['Dashboard','Customers','Services','Packages','Highsites','Sectors','Equipment','RADIUS NAS','RADIUS Sessions','RADIUS Usage','RADIUS Operations','Tickets','Billing','Billing Policy','Staff'];
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
 const money=n=>new Intl.NumberFormat('en-ZA',{style:'currency',currency:'ZAR'}).format(Number(n)||0);
 async function api(path,method='GET',payload){
@@ -24,7 +24,9 @@ async function boot(skipAuth=false){
   if(!skipAuth){const session=await api('/status');csrf=session.csrf;role=session.role;username=session.username}
   identity.textContent=username+' · '+role;logout.hidden=false;
   root.innerHTML='<div class="shell"><nav id="nav"></nav><main id="content"></main></div>';
-  views.forEach(v=>{if(v==='Staff'&&role!=='admin')return;if(v==='Billing'&&!['admin','dispatcher'].includes(role))return;if(v==='RADIUS NAS'&&!['admin','dispatcher'].includes(role))return;
+  views.forEach(v=>{if(v==='Staff'&&role!=='admin')return;if(v==='Billing'&&!['admin','dispatcher'].includes(role))return;
+   if(v==='Billing Policy'&&role!=='admin')return;
+   if(['RADIUS Usage','RADIUS Operations'].includes(v)&&!['admin','dispatcher'].includes(role))return;if(v==='RADIUS NAS'&&!['admin','dispatcher'].includes(role))return;
    let b=document.createElement('button');b.textContent=v;b.onclick=()=>{tab=v;render()};b.dataset.tab=v;root.querySelector('#nav').append(b)});
   await refresh();
  }catch{login()}
@@ -32,8 +34,8 @@ async function boot(skipAuth=false){
 async function refresh(){
  const names=['customers','services','packages','highsites','sectors','tickets','branches'];
  const endpoints={customers:'/customers',services:'/services',packages:'/packages',highsites:'/highsites',sectors:'/sectors',tickets:'/tickets',
-  nas:'/radius/nas',sessions:'/radius/sessions',invoices:'/invoices',staff:'/staff',equipment:'/equipment'};
- const need=tab==='RADIUS NAS'?['nas']:tab==='RADIUS Sessions'?['sessions']:tab==='Billing'?['invoices']:tab==='Staff'?['staff']:tab==='Equipment'?['equipment']:[];
+  nas:'/radius/nas-management',sessions:'/radius/sessions',operations:'/radius/operations',invoices:'/invoices',staff:'/staff',equipment:'/equipment'};
+ const need=tab==='RADIUS NAS'?['nas']:tab==='RADIUS Sessions'?['sessions']:tab==='Billing'?['invoices']:tab==='Staff'?['staff']:tab==='Equipment'?['equipment']:tab==='RADIUS Operations'?['operations']:[];
  const failed=[];
  await Promise.all([...names,...need].map(async n=>{try{data[n]=await api(endpoints[n])}catch(e){failed.push(n+': '+e.message);data[n]=[]}}));
  render();
@@ -44,19 +46,82 @@ function render(){
  const content=root.querySelector('#content');content.innerHTML='<div class="sub">NETFORGE · '+esc(tab.toUpperCase())+'</div><p id="message" role="status"></p>';
  if(tab==='Dashboard')dashboard(content);
  else if(tab==='Customers')list(content,'customers','Customer accounts',['account','first_name','surname','phone','status','highsite','sector']);
- else if(tab==='Services')list(content,'services','Customer services & PPPoE',['account','username','package','state','static_ipv4','radius_enabled']);
+ else if(tab==='Services')list(content,'services','Customer services & PPPoE',['account','username','package','state','suspension_reason','static_ipv4','radius_enabled']);
  else if(tab==='Packages')list(content,'packages','Service packages',['name','download_mbps','upload_mbps','monthly_price','mikrotik_rate_limit']);
  else if(tab==='Highsites')list(content,'highsites','Highsites',['number','name','branch','latitude','longitude','subscribers']);
  else if(tab==='Sectors')list(content,'sectors','Access sectors',['highsite','name','ssid','azimuth','frequency_mhz','max_customers','customers']);
  else if(tab==='Equipment')list(content,'equipment','Site & customer equipment',['name','model','category','account','highsite','management_ip','serial_number','ownership']);
- else if(tab==='RADIUS NAS')list(content,'nas','RADIUS NAS clients',['shortname','nasname','type','description']);
- else if(tab==='RADIUS Sessions')list(content,'sessions','RADIUS accounting sessions',['username','nas_ip','assigned_ip','acctstarttime','acctupdatetime','recently_seen']);
+ else if(tab==='RADIUS NAS')list(content,'nas','RADIUS NAS clients',['shortname','nasname','vendor','disconnect_port','disconnect_enabled','description']);
+ else if(tab==='RADIUS Sessions')list(content,'sessions','RADIUS accounting sessions',['username','nas_ip','acctsessionid','assigned_ip','acctstarttime','acctupdatetime','recently_seen']);
+ else if(tab==='RADIUS Usage')radiusUsage(content);
+ else if(tab==='RADIUS Operations')list(content,'operations','RADIUS disconnect operations',['created_at','username','acctsessionid','result','actor','reason','response_note']);
  else if(tab==='Tickets')list(content,'tickets','Support tickets',['number','subject','account','type','priority','status','created_at']);
  else if(tab==='Billing')list(content,'invoices','Invoices',['number','account','total','paid','outstanding','status','due_date']);
+ else if(tab==='Billing Policy')billingPolicy(content);
  else if(tab==='Staff')list(content,'staff','Staff accounts',['username','role','enabled','created_at']);
 }
 function notice(text,isError=false){
  const target=root.querySelector('#message');if(target){target.className=isError?'error':'notice';target.textContent=text}else alert(text);
+}
+
+function numberGb(bytes){return ((Number(bytes)||0)/1073741824).toFixed(2)+' GB'}
+function radiusUsage(el){
+ const today=new Date().toISOString().slice(0,7);
+ el.insertAdjacentHTML('beforeend','<div class="toolbar"><div><h1>Subscriber RADIUS usage</h1><p class="sub">Summaries from FreeRADIUS accounting, grouped by session start month.</p></div><label>Month <input id="usage-period" type="month" value="'+today+'" min="2020-01"></label></div><p class="notice warning">Long-running sessions crossing billing months are not split. These figures are operational estimates, not billable usage.</p><div id="usage-content" class="card">Loading…</div>');
+ const input=el.querySelector('#usage-period'),content=el.querySelector('#usage-content');
+ async function load(){content.textContent='Loading accounting data…';
+  try{
+   const result=await api('/radius/usage?period='+encodeURIComponent(input.value));
+   const rows=result.records;
+   content.innerHTML='<div class="tablewrap"><table><thead><tr><th>Account</th><th>PPPoE login</th><th>Sessions</th><th>Download</th><th>Upload</th><th>Unclosed</th></tr></thead><tbody>'+rows.map(row=>'<tr><td>'+esc(row.account)+'</td><td>'+esc(row.username)+'</td><td>'+esc(row.sessions)+'</td><td>'+esc(numberGb(row.download_bytes))+'</td><td>'+esc(numberGb(row.upload_bytes))+'</td><td>'+esc(row.unclosed)+'</td></tr>').join('')+'</tbody></table></div><p class="sub">'+esc(result.note)+'</p>';
+  }catch(e){content.textContent=e.message}
+ }
+ input.addEventListener('change',load);load();
+}
+function billingPolicy(el){
+ el.insertAdjacentHTML('beforeend','<h1>Subscriber billing enforcement</h1><p class="sub">Opt-in automation: overdue issued invoices can block new PPPoE logins. Existing sessions are NOT disconnected automatically.</p><div class="card"><form id="policy-form"><label><input id="policy-enabled" name="enabled" type="checkbox" style="width:auto"> Automatically suspend overdue subscriber services</label><label>Grace period after due date (days)<input id="policy-grace" type="number" min="0" max="120" value="7" required></label><label><input id="policy-restore" type="checkbox" style="width:auto"> Automatically reactivate overdue-suspended services after debts are settled</label><p id="policy-preview" class="notice">Loading policy…</p><div class="buttons"><button class="primary">Save policy</button><button type="button" id="policy-run">Run policy now</button></div><p id="policy-result" role="status"></p></form></div>');
+ const form=el.querySelector('#policy-form'),enabled=el.querySelector('#policy-enabled'),grace=el.querySelector('#policy-grace'),restore=el.querySelector('#policy-restore'),preview=el.querySelector('#policy-preview'),result=el.querySelector('#policy-result');
+ async function load(){
+  try{const x=await api('/billing/enforcement');
+   enabled.checked=x.settings.enabled;grace.value=x.settings.grace_days;restore.checked=x.settings.restore_when_paid;
+   preview.textContent='Current preview: '+x.preview.to_suspend+' service(s) would be suspended; '+x.preview.eligible_to_restore+' eligible to restore. Changes apply to all active customers with overdue issued invoices.';
+  }catch(e){preview.textContent=e.message}
+ }
+ form.onsubmit=async e=>{e.preventDefault();
+  const newSettings={enabled:enabled.checked,graceDays:Number(grace.value),restoreWhenPaid:restore.checked};
+  if(newSettings.enabled&&!confirm('Enable automated service suspension for overdue accounts? This changes live RADIUS authentication. Existing sessions will remain active until separately disconnected.'))return;
+  try{await api('/billing/enforcement','PUT',newSettings);result.textContent='Policy saved. Enabled='+newSettings.enabled;await load()}
+  catch(e){result.textContent=e.message}
+ };
+ el.querySelector('#policy-run').onclick=async()=>{
+  if(!enabled.checked){result.textContent='Enable and save the policy before running it.';return}
+  if(!confirm('Apply the configured overdue-billing enforcement policy now?'))return;
+  try{const r=await api('/billing/enforcement/run','POST',{});result.textContent=r.note+' Suspended: '+r.suspended+'; restored: '+r.restored;await refresh()}
+  catch(e){result.textContent=e.message}
+ };
+ load();
+}
+function packagePicker(currentId){
+ return '<select id="service-new-package">'+(data.packages||[]).map(p=>'<option value="'+esc(p.id)+'" '+(p.id===currentId?'selected':'')+'>'+esc(p.name)+' — '+esc(p.download_mbps)+'/'+esc(p.upload_mbps)+' Mbps</option>').join('')+'</select>';
+}
+function mikrotikInstructions(nas){
+ const server=prompt('Enter your NetForge RADIUS server private IPv4 address (reachable by the router):');
+ if(server===null)return;
+ const octets=server.split('.').map(x=>Number(x));
+ if(octets.length!==4||octets.some((v,i)=>!/^\d{1,3}$/.test(server.split('.')[i])||v>255)){alert('Enter a valid IPv4 address');return}
+ const secret=prompt('Enter the same new NAS shared secret used during enrollment. It will not be saved by the browser:');
+ if(secret===null)return;
+ if(secret.length<16){alert('NAS shared secret must be at least 16 characters');return}
+ const escapeRos=s=>'"'+s.replace(/[\\$"]/g,ch=>'\\'+ch).replace(/[\r\n]/g,'')+'"';
+ const commands=[
+  '/radius add service=ppp address='+server+' secret='+escapeRos(secret)+' authentication-port=1812 accounting-port=1813',
+  '/ppp aaa set use-radius=yes accounting=yes interim-update=5m',
+  '/radius incoming set accept=yes port='+String(nas.disconnect_port||1700)
+ ].join('\n');
+ const d=dialog('<h2>MikroTik RADIUS setup</h2><p class="notice warning">Review for existing /radius entries before using. Duplicate entries can cause login failures. Restrict UDP 1812/1813 to the NAS and the configured Disconnect port to your RADIUS source IP.</p><textarea id="ros-script" rows="8" readonly></textarea><p class="sub">This script is generated locally and not sent to the NetForge backend.</p><button id="copy-script" class="primary">Copy RouterOS commands</button><button id="close">Close</button>');
+ d.querySelector('#ros-script').value=commands;
+ d.querySelector('#copy-script').onclick=()=>navigator.clipboard.writeText(commands).then(()=>notice('Commands copied. Verify the NAS settings before applying.')).catch(()=>notice('Select the script text and copy manually.',true));
+ d.querySelector('#close').onclick=()=>d.close();
 }
 function dashboard(el){
  el.insertAdjacentHTML('beforeend','<h1>ISP Operations</h1><p class="sub">CRM, subscriber services, RADIUS and network infrastructure.</p><div id="stats" class="grid"></div><div class="card topgap"><h2>Operational context</h2><p>RADIUS authentication and accounting are supplied by FreeRADIUS. Adding a NAS requires a FreeRADIUS restart. Suspending a service stops new authentications but does not disconnect an already established session.</p><button id="refresh" class="primary">Refresh dashboard</button></div>');
@@ -151,13 +216,57 @@ function details(collection,r){
  const actions=d.querySelector('#actions');
  const btn=(name,handler)=>{const b=document.createElement('button');b.textContent=name;b.onclick=handler;actions.append(b)};
  const run=async (path,body={})=>{try{await api(path,'POST',body);d.close();await refresh()}catch(e){d.querySelector('#actionerror').textContent=e.message}};
+ if(collection==='nas'&&role==='admin'){
+  btn('Disconnect settings',()=>{
+   const d2=dialog('<h2>NAS disconnect settings</h2><form id="nas-config"><label>NAS type</label><select name="vendor"><option value="mikrotik">MikroTik</option><option value="generic">Generic</option></select><label>Disconnect UDP port</label><input name="port" type="number" min="1" max="65535" value="'+esc(r.disconnect_port||1700)+'"><label><input name="enabled" type="checkbox" style="width:auto"> Enable Disconnect-Request on this NAS</label><p class="error" id="config-error"></p><button class="primary">Save NAS settings</button><button type="button" id="close">Cancel</button></form>');
+   d2.querySelector('[name="vendor"]').value=r.vendor||'mikrotik';
+   d2.querySelector('[name="enabled"]').checked=Boolean(r.disconnect_enabled);
+   d2.querySelector('#close').onclick=()=>d2.close();
+   d2.querySelector('#nas-config').onsubmit=async e=>{e.preventDefault();if(!confirm('Apply these Disconnect settings? UDP access must be restricted to the RADIUS host.'))return;
+    try{await api('/radius/nas/'+r.id+'/settings','PUT',{vendor:d2.querySelector('[name="vendor"]').value,disconnectPort:Number(d2.querySelector('[name="port"]').value),disconnectEnabled:d2.querySelector('[name="enabled"]').checked});d2.close();d.close();await refresh()}
+    catch(err){d2.querySelector('#config-error').textContent=err.message}
+   };
+  });
+  btn('Rotate NAS shared secret',()=>{
+   const secret=prompt('New shared secret (16+ characters). RADIUS must be restarted and the NAS updated afterwards.');
+   if(secret===null)return;
+   if(!confirm('Rotate the NAS secret? Until RouterOS and FreeRADIUS agree, subscriber logins can fail.'))return;
+   run('/radius/nas/'+r.id+'/secret',{secret,confirmRestartRequired:true});
+  });
+  btn('Generate RouterOS setup instructions',()=>mikrotikInstructions(r));
+ }
+ if(collection==='sessions'&&role==='admin'&&r.recently_seen&&r.acctstoptime==null){
+  btn('Disconnect recorded session',async()=>{
+   const reason=prompt('Reason for disconnecting '+r.username+' on '+r.nas_ip+':');
+   if(reason===null)return;
+   if(reason.trim().length<5){d.querySelector('#actionerror').textContent='Reason must be at least 5 characters';return}
+   if(!confirm('Send RADIUS Disconnect-Request for exactly this recorded session? This may interrupt customer service.'))return;
+   try{
+    const reply=await api('/radius/sessions/'+r.radacctid+'/disconnect','POST',{
+     requestId:crypto.randomUUID(),reason:reason.trim(),confirm:true
+    });d.close();await refresh();notice('Disconnect '+reply.result+': '+reply.note)}
+   catch(e){d.querySelector('#actionerror').textContent=e.message}
+  });
+ }
  if(collection==='services'&&role==='admin'){
   btn('Set / rotate RADIUS password',()=>{
    const password=prompt('Enter a NEW subscriber PPPoE password (12–128 characters). This is not stored in your browser.');
    if(password===null)return;if(password.length<12){alert('Password too short');return}
    run('/services/'+r.id+'/credentials',{password});
   });
+  btn('Change subscriber package',()=>{
+   const d2=dialog('<h2>Change service package</h2><p>Applies new speed to future RADIUS logins. Connected sessions retain their existing rate until reconnection.</p>'+packagePicker(r.package_id)+'<p id="plan-error" class="error"></p><button id="plan-save" class="primary">Change package</button><button id="plan-cancel">Cancel</button>');
+   d2.querySelector('#plan-cancel').onclick=()=>d2.close();
+   d2.querySelector('#plan-save').onclick=async()=>{
+    if(!confirm('Change the package for '+r.username+'?'))return;
+    try{const next=await api('/services/'+r.id+'/package','PUT',{packageId:d2.querySelector('#service-new-package').value});d2.close();d.close();await refresh();notice('Package updated: '+next.rateLimit+'. Reconnect session to apply immediately.')}
+    catch(e){d2.querySelector('#plan-error').textContent=e.message}
+   };
+  });
   btn('Suspend PPPoE authentication',()=>{if(confirm('Disable new PPPoE authentications? Existing sessions require CoA/disconnect.'))run('/services/'+r.id+'/suspend')});
+  if(r.state==='suspended')btn('Reactivate PPPoE authentication',()=>{
+   if(confirm('Reactivate this subscriber? The customer must be active and a PPPoE password must be stored.'))run('/services/'+r.id+'/reactivate')
+  });
  }
  if(collection==='tickets'&&role!=='viewer'){
   ['in_progress','pending','resolved','closed'].forEach(status=>btn('Mark '+status,async()=>{
