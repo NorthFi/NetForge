@@ -57,3 +57,8 @@ CREATE TABLE IF NOT EXISTS billing_policy_runs (
   restored integer NOT NULL DEFAULT 0,
   status varchar(20) NOT NULL DEFAULT 'success'
 );
+
+CREATE INDEX IF NOT EXISTS idx_invoices_issued_due ON invoices(customer_id,due_date)
+  WHERE status='issued';
+CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_services_state_customer ON services(state,customer_id);

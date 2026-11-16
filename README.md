@@ -16,7 +16,12 @@ selfhost/
     Program.cs
     Core.cs
     Endpoints.cs
-  db/001_init.sql
+    NetworkManagement.cs
+    RadiusDynamicAuth.cs
+    ServiceLifecycle.cs
+  db/
+    001_init.sql
+    002_radius_management.sql
   radius/
     Dockerfile
     entrypoint.sh
@@ -55,6 +60,20 @@ selfhost/
 
 **Important:** The API requires HTTPS for its Secure session cookie. Direct HTTP access on the loopback port is for a proxy connection or health-check only. A bare HTTP browser login may not persist.
 
+## Phase 2: MikroTik / RADIUS lifecycle
+
+Detailed configuration and operational safeguards are in [selfhost/NETWORK_OPERATIONS.md](selfhost/NETWORK_OPERATIONS.md).
+
+The current self-hosted build includes:
+- Individual NAS disconnect settings (default **disabled**, MikroTik default UDP **1700** per current RouterOS manual; configurable for NAS running UDP 3799).
+- Administrator-confirmed Disconnect-Request (RFC 5176 code 40) directed **only** to a matching session in `radacct` and a registered NAS IP. RADIUS ACK/NAK packet source, identifier and MD5 Request/Response Authenticators are checked; timeout or invalid response is recorded as an unknown/error state.
+- Per-subscriber speed profile changes with deterministic `Mikrotik-Rate-Limit` values. The rate field is **router RX/TX**: subscriber upload/downlink expressed as `uploadM/downloadM` by default, unless an explicitly validated override is set.
+- Auth-Type Reject suspension and explicit reactivation, retaining PPPoE credentials. Password rotation while suspended does **not** reactivate a service.
+- Accounting usage grouped by session-start month, with RouterOS **Input Octets as subscriber upload** and **Output Octets as subscriber download**. Cross-month sessions are not split. Do not use these approximations for metered billing.
+- Optional overdue invoice enforcement. `billing_controls.enabled` defaults to `false`; an administrator must explicitly enable suspension, select the grace period, and optionally enable restoration after full payment. A hosted worker checks every 10 minutes, with PostgreSQL advisory locking to avoid concurrent scheduled runs. **The policy does not send automatic Disconnect-Requests.**
+
+When a session disconnect request receives ACK, the NAS has acknowledged the request. Only a later accounting Stop or independent NAS observation confirms that the subscriber actually disconnected. A timeout is ambiguous, not proof of failure.
+
 ## Current capabilities
 
 - Staff login with PBKDF2 password hashes, cookie authentication, role checks and request CSRF tokens.
@@ -72,9 +91,9 @@ selfhost/
 
 - The service **must be created pending** and then activated with a password. No RADIUS password is returned by API reads.
 - FreeRADIUS uses the `Cleartext-Password` check item for PAP/CHAP/MSCHAP compatibility. This is **sensitive plaintext in PostgreSQL**. Encrypt database volumes/backups, restrict database access, use network segmentation, and plan a dedicated RADIUS database account with least-privilege access.
-- Suspending a customer or service deletes the active `Cleartext-Password` check item. It prevents **new authentication**; it does **not** disconnect an existing PPPoE session. CoA/Disconnect is not yet implemented.
+- Suspending a customer or service adds a FreeRADIUS `Auth-Type := Reject` check item and retains the PPPoE password for later reactivation. It prevents **new authentication** but does **not** disconnect an existing PPPoE session. An administrator can disconnect an individual live session via an explicitly enabled NAS.
 - The session list shows unclosed accounting records, which may include stale sessions. The `recently_seen` indicator is based on the last 30 minutes.
-- MikroTik `Mikrotik-Rate-Limit` values are admin-configured and must match your intended RouterOS directionality.
+- MikroTik `Mikrotik-Rate-Limit` values default to subscriber upload/download (RouterOS receive/transmit); verify directionality with your service profiles and RouterOS version before onboarding.
 - Recurring invoice draft creation is **manual** and idempotent per customer and billing month. There is no tax, proration, payment gateway, credit ledger, SMS/email notification or legally compliant invoice PDF implementation yet.
 - Do not expose the PostgreSQL port or the application management port directly to the public Internet.
 - Do not place RADIUS device shared secrets in tickets or notes. The NAS secret is displayed only at creation time and is stored in PostgreSQL for FreeRADIUS to use.
@@ -90,7 +109,7 @@ Set `Database__ConnectionString`, `NETFORGE_ADMIN_USER`, `NETFORGE_ADMIN_PASSWOR
 
 ## Current gaps versus full Splynx functionality
 
-Do **not** assume this is complete Splynx functionality. Missing major components include RADIUS CoA/Disconnect, comprehensive NAS lifecycle, automated payment gateways, prepaid vouchers, RADIUS usage-billing reconciliation, TR-069/USP ACS, SNMP telemetry/alerts, API token access, customer portal, backups and restore UI, VoIP CDR billing, automated technician dispatch, messaging gateways, stock procurement, contracts and quotations, complete audit and authorization policies, multi-tenant operations, and HA.
+Do **not** assume this is complete Splynx functionality. Missing major components include true live-session CoA speed changes, large-scale NAS automation and comprehensive NAS lifecycle, automated payment gateways, prepaid vouchers, RADIUS usage-billing reconciliation, TR-069/USP ACS, SNMP telemetry/alerts, API token access, customer portal, backups and restore UI, VoIP CDR billing, automated technician dispatch, messaging gateways, stock procurement, contracts and quotations, complete audit and authorization policies, multi-tenant operations, and HA.
 
 This branch **intentionally excludes the RF link planner**. It retains basic WISP highsite/sector/subscriber relationships and equipment records.
 
