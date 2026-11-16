@@ -335,8 +335,8 @@ public static class Endpoints
                 return Invalid("NAS requires IPv4 address, name and shared secret at least 16 characters");
             await using var conn=await db.OpenConnectionAsync();
             await using var cmd=new NpgsqlCommand("""
-                INSERT INTO nas(nasname,shortname,type,secret,description)
-                VALUES(@address,@name,'other',@secret,@description) RETURNING id
+                INSERT INTO nas(nasname,shortname,type,secret,description,require_ma,limit_proxy_state)
+                VALUES(@address,@name,'other',@secret,@description,'yes','yes') RETURNING id
                 """,conn);
             cmd.Parameters.AddRange(new NpgsqlParameter[] {
                 Store.P("address",body.Address),Store.P("name",body.Name),

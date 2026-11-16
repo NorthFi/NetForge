@@ -43,9 +43,9 @@ service="$(id)"
 api "/services/$service/credentials" '{"password":"RadiusCiUserPassword2026"}'
 docker compose exec -T radius radtest rad-ci-user RadiusCiUserPassword2026 127.0.0.1 0 testing123 | tee "$BASE/authok"
 grep -q 'Access-Accept' "$BASE/authok"
-docker compose exec -T radius radtest rad-ci-user wrong-password 127.0.0.1 0 testing123 | tee "$BASE/authfail"
+docker compose exec -T radius radtest rad-ci-user wrong-password 127.0.0.1 0 testing123 | tee "$BASE/authfail" || true
 grep -q 'Access-Reject' "$BASE/authfail"
 api "/services/$service/suspend" '{}'
-docker compose exec -T radius radtest rad-ci-user RadiusCiUserPassword2026 127.0.0.1 0 testing123 | tee "$BASE/authsuspend"
+docker compose exec -T radius radtest rad-ci-user RadiusCiUserPassword2026 127.0.0.1 0 testing123 | tee "$BASE/authsuspend" || true
 grep -q 'Access-Reject' "$BASE/authsuspend"
 echo 'Real FreeRADIUS SQL PAP accept/reject tests passed.'
