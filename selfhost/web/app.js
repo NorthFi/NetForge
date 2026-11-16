@@ -2,7 +2,7 @@
 'use strict';
 const root=document.querySelector('#root'),identity=document.querySelector('#identity'),logout=document.querySelector('#logout');
 let csrf='',role='',username='',tab='Dashboard',data={};
-const views=['Dashboard','Customers','Services','Packages','Highsites','Sectors','Equipment','RADIUS NAS','RADIUS Sessions','RADIUS Usage','RADIUS Operations','Tickets','Billing','Billing Policy','Customer Portal','Staff'];
+const views=['Dashboard','Customers','Services','Packages','Highsites','Sectors','Equipment','RADIUS NAS','RADIUS Sessions','RADIUS Usage','RADIUS Operations','Tickets','Billing','Bank Reconciliation','Financial Ledger','Billing Policy','Customer Portal','Staff'];
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
 const money=n=>new Intl.NumberFormat('en-ZA',{style:'currency',currency:'ZAR'}).format(Number(n)||0);
 async function api(path,method='GET',payload){
@@ -24,7 +24,7 @@ async function boot(skipAuth=false){
   if(!skipAuth){const session=await api('/status');csrf=session.csrf;role=session.role;username=session.username}
   identity.textContent=username+' · '+role;logout.hidden=false;
   root.innerHTML='<div class="shell"><nav id="nav"></nav><main id="content"></main></div>';
-  views.forEach(v=>{if((v==='Staff'||v==='Customer Portal')&&role!=='admin')return;if(v==='Billing'&&!['admin','dispatcher'].includes(role))return;
+  views.forEach(v=>{if((v==='Staff'||v==='Customer Portal'||v==='Bank Reconciliation'||v==='Financial Ledger')&&role!=='admin')return;if(v==='Billing'&&!['admin','dispatcher'].includes(role))return;
    if(v==='Billing Policy'&&role!=='admin')return;
    if(['RADIUS Usage','RADIUS Operations'].includes(v)&&!['admin','dispatcher'].includes(role))return;if(v==='RADIUS NAS'&&!['admin','dispatcher'].includes(role))return;
    let b=document.createElement('button');b.textContent=v;b.onclick=()=>{tab=v;render()};b.dataset.tab=v;root.querySelector('#nav').append(b)});
@@ -34,8 +34,8 @@ async function boot(skipAuth=false){
 async function refresh(){
  const names=['customers','services','packages','highsites','sectors','tickets','branches'];
  const endpoints={customers:'/customers',services:'/services',packages:'/packages',highsites:'/highsites',sectors:'/sectors',tickets:'/tickets',
-  nas:'/radius/nas-management',sessions:'/radius/sessions',operations:'/radius/operations',invoices:'/invoices',staff:'/staff',equipment:'/equipment'};
- const need=tab==='RADIUS NAS'?['nas']:tab==='RADIUS Sessions'?['sessions']:tab==='Billing'?['invoices']:tab==='Staff'?['staff']:tab==='Equipment'?['equipment']:tab==='RADIUS Operations'?['operations']:[];
+  nas:'/radius/nas-management',sessions:'/radius/sessions',operations:'/radius/operations',invoices:'/invoices',staff:'/staff',equipment:'/equipment',bankLines:'/billing/bank-lines',ledger:'/billing/ledger',trial:'/billing/trial-balance',allPayments:'/billing/payments',credits:'/billing/credits'};
+ const need=tab==='RADIUS NAS'?['nas']:tab==='RADIUS Sessions'?['sessions']:tab==='Billing'?['invoices']:tab==='Staff'?['staff']:tab==='Equipment'?['equipment']:tab==='RADIUS Operations'?['operations']:tab==='Bank Reconciliation'?['invoices','bankLines','allPayments','credits']:tab==='Financial Ledger'?['ledger','trial']:[];
  const failed=[];
  await Promise.all([...names,...need].map(async n=>{try{data[n]=await api(endpoints[n])}catch(e){failed.push(n+': '+e.message);data[n]=[]}}));
  render();
@@ -56,7 +56,9 @@ function render(){
  else if(tab==='RADIUS Usage')radiusUsage(content);
  else if(tab==='RADIUS Operations')list(content,'operations','RADIUS disconnect operations',['created_at','username','acctsessionid','result','actor','reason','response_note']);
  else if(tab==='Tickets')list(content,'tickets','Support tickets',['number','subject','account','type','priority','status','created_at']);
- else if(tab==='Billing')list(content,'invoices','Invoices',['number','account','total','paid','outstanding','status','due_date']);
+ else if(tab==='Billing')list(content,'invoices','Invoices',['number','account','total','paid','credited','outstanding','status','due_date']);
+ else if(tab==='Bank Reconciliation')bankReconciliation(content);
+ else if(tab==='Financial Ledger')financialLedger(content);
  else if(tab==='Billing Policy')billingPolicy(content);
  else if(tab==='Customer Portal')portalAccounts(content);
  else if(tab==='Staff')list(content,'staff','Staff accounts',['username','role','enabled','created_at']);
@@ -109,6 +111,85 @@ async function ticketConversation(ticket){
  };
  draw();
 }
+
+function outstandingInvoices(){
+ return (data.invoices||[]).filter(x=>x.status==='issued'&&Number(x.outstanding)>0);
+}
+function money2(v){return money(v)}
+function creditNote(invoice){
+ if(role!=='admin'||Number(invoice.outstanding)<=0)return;
+ const d=dialog('<h2>Issue credit note</h2><p class="note">Credit notes reduce accounts receivable and post an immutable balancing journal. This does not refund funds to the bank.</p><form id="credit-form"><label>Invoice</label><input readonly value="'+esc(invoice.number)+'"><label>Credit note number (unique)</label><input name="number" required maxlength="120"><label>Amount (maximum '+esc(money(invoice.outstanding))+')</label><input name="amount" type="number" min="0.01" max="'+esc(invoice.outstanding)+'" step="0.01" required><label>Reason</label><textarea name="reason" minlength="8" maxlength="300" rows="3" required></textarea><p id="credit-error" class="error"></p><div class="buttons"><button class="primary">Post credit note</button><button type="button" id="cancel">Cancel</button></div></form>');
+ d.querySelector('#cancel').onclick=()=>d.close();
+ d.querySelector('#credit-form').onsubmit=async e=>{e.preventDefault();
+  const values=Object.fromEntries(new FormData(e.target));
+  if(!confirm('Post an irreversible credit note for '+invoice.number+'? Corrections require a separate accounting process.'))return;
+  try{await api('/billing/credits','POST',{invoiceId:invoice.id,number:values.number,amount:Number(values.amount),reason:values.reason});d.close();await refresh();notice('Credit note posted; receivable updated.')}
+  catch(err){d.querySelector('#credit-error').textContent=err.message}
+ };
+}
+function bankReconciliation(el){
+ el.innerHTML+='<h1>Bank reconciliation</h1><p class="sub">Review incoming bank statement rows before posting or allocating. No payments are recorded by importing a file alone.</p><div class="card"><h2>Import bank statement CSV</h2><p class="muted">Required header: Date,Amount,Description,Reference,TransactionId. Dates YYYY-MM-DD, amounts in ZAR (negative for debits). A stable unique bank transaction ID is mandatory.</p><div class="formgrid"><div><label>Bank / statement account label</label><input id="bank-name" placeholder="e.g. FNB operating" required maxlength="100"></div><div><label>CSV statement</label><input id="bank-file" type="file" accept=".csv,text/csv"></div></div><div class="buttons topgap"><button id="bank-preview" class="primary">Preview import</button><button id="bank-template">Copy CSV header</button></div><p id="bank-status" role="status"></p><div id="bank-preview-result"></div></div><div class="card topgap"><div class="toolbar"><h2>Imported bank transactions</h2><button id="bank-refresh">Refresh</button></div><div id="bank-lines"></div></div><div class="card topgap"><h2>Payment records and reversals</h2><div id="payment-register"></div></div><div class="card topgap"><h2>Credit notes</h2><div id="credit-register"></div></div>';
+ let pending=null;
+ const status=el.querySelector('#bank-status'),previewTarget=el.querySelector('#bank-preview-result'),bankName=el.querySelector('#bank-name'),file=el.querySelector('#bank-file');
+ el.querySelector('#bank-template').onclick=()=>navigator.clipboard.writeText('Date,Amount,Description,Reference,TransactionId').then(()=>status.textContent='Header copied.').catch(()=>status.textContent='Copy the header shown above.');
+ el.querySelector('#bank-preview').onclick=async()=>{
+  pending=null;previewTarget.innerHTML='';status.textContent='';
+  const upload=file.files?.[0];
+  if(!upload||!bankName.value.trim()){status.textContent='Specify a bank label and choose a CSV file.';return}
+  if(upload.size>250000){status.textContent='Maximum CSV file size is 250 KB.';return}
+  try{
+   const csv=await upload.text();
+   const payload={bankName:bankName.value.trim(),filename:upload.name,csv,confirm:false};
+   const response=await api('/billing/bank-imports/preview','POST',payload);
+   pending=payload;
+   status.textContent='Preview complete: '+response.count+' rows; '+response.duplicateCount+' duplicates. No records have been created.';
+   previewTarget.innerHTML='<div class="tablewrap"><table><thead><tr><th>Date</th><th>Transaction ID</th><th>Amount</th><th>Reference</th><th>State</th></tr></thead><tbody>'+response.rows.map(r=>'<tr><td>'+esc(r.date)+'</td><td>'+esc(r.transactionId)+'</td><td>'+esc(money(r.amount))+'</td><td>'+esc(r.reference)+'</td><td>'+esc(r.duplicate?'Duplicate':r.allocatable?'Incoming':'Outgoing')+'</td></tr>').join('')+'</tbody></table></div><p class="note">Confirm only after checking the bank and transaction IDs. Import does not post payments.</p><button id="bank-confirm" class="primary">Import reviewed transactions</button>';
+   el.querySelector('#bank-confirm').onclick=async()=>{
+    if(!pending||!confirm('Import these bank lines into the unmatched register? No invoice balance will change until individually allocated.'))return;
+    try{const result=await api('/billing/bank-imports','POST',{...pending,confirm:true});
+     status.textContent='Imported '+result.imported+'; skipped '+result.skipped+' already known entries.';
+     pending=null;previewTarget.innerHTML='';await refresh();
+    }catch(e){status.textContent=e.message}
+   };
+  }catch(e){status.textContent=e.message}
+ };
+ const lines=el.querySelector('#bank-lines');
+ const bankRows=data.bankLines||[];
+ lines.innerHTML='<div class="tablewrap"><table><thead><tr><th>Date</th><th>Bank</th><th>Transaction</th><th>Reference</th><th>Amount</th><th>Unallocated</th><th>Action</th></tr></thead><tbody>'+bankRows.map(row=>'<tr><td>'+esc(row.value_date)+'</td><td>'+esc(row.bank_name)+'</td><td>'+esc(row.transaction_id)+'</td><td>'+esc(row.reference)+'</td><td>'+esc(money(row.amount))+'</td><td>'+esc(money(row.available))+'</td><td>'+(Number(row.available)>0?'<button data-allocate="'+esc(row.id)+'">Allocate</button>':'—')+'</td></tr>').join('')+'</tbody></table>'+(bankRows.length?'':'<p>No bank statement rows imported.</p>')+'</div>';
+ lines.querySelectorAll('[data-allocate]').forEach(btn=>btn.onclick=()=>{
+  const row=bankRows.find(x=>x.id===btn.dataset.allocate);
+  if(!row)return;
+  const invoices=outstandingInvoices();
+  if(!invoices.length){status.textContent='No issued invoices with an outstanding balance.';return}
+  const d=dialog('<h2>Allocate bank receipt</h2><p class="muted">'+esc(row.bank_name)+' · '+esc(row.transaction_id)+' · available '+esc(money(row.available))+'</p><form id="allocate-form"><label>Invoice</label><select name="invoiceId" required>'+invoices.map(i=>'<option value="'+esc(i.id)+'">'+esc(i.number)+' / '+esc(i.account)+' / outstanding '+esc(money(i.outstanding))+'</option>').join('')+'</select><label>Allocation amount</label><input type="number" step="0.01" min="0.01" max="'+esc(row.available)+'" value="'+esc(row.available)+'" name="amount" required><p id="alloc-error" class="error"></p><div class="buttons"><button class="primary">Allocate payment</button><button type="button" id="cancel">Cancel</button></div></form>');
+  d.querySelector('#cancel').onclick=()=>d.close();
+  d.querySelector('#allocate-form').onsubmit=async e=>{e.preventDefault();const values=Object.fromEntries(new FormData(e.target));
+   if(!confirm('Allocate '+money(values.amount)+' from bank line '+row.transaction_id+' to the selected invoice?'))return;
+   try{const result=await api('/billing/bank-lines/'+row.id+'/allocate','POST',{invoiceId:values.invoiceId,amount:Number(values.amount),requestId:crypto.randomUUID()});d.close();await refresh();notice('Payment posted; invoice remaining '+money(result.remaining));}
+   catch(err){d.querySelector('#alloc-error').textContent=err.message}
+  };
+ });
+ const payments=data.allPayments||[];
+ el.querySelector('#payment-register').innerHTML='<div class="tablewrap"><table><thead><tr><th>Date</th><th>Invoice</th><th>Reference</th><th>Amount</th><th>State</th><th>Action</th></tr></thead><tbody>'+payments.map(row=>'<tr><td>'+esc(row.received_at)+'</td><td>'+esc(row.invoice)+'</td><td>'+esc(row.reference)+'</td><td>'+esc(money(row.amount))+'</td><td>'+esc(row.reversal_id?'Reversed':'Posted')+'</td><td>'+(row.reversal_id?'—':'<button data-reverse="'+esc(row.id)+'">Reverse</button>')+'</td></tr>').join('')+'</tbody></table></div>';
+ el.querySelectorAll('[data-reverse]').forEach(btn=>btn.onclick=async()=>{
+  const item=payments.find(x=>x.id===btn.dataset.reverse);if(!item)return;
+  const reason=prompt('Reason for reversing payment '+item.reference+' (minimum 8 characters):');
+  if(reason===null)return;
+  if(reason.trim().length<8){status.textContent='A reversal reason of at least 8 characters is required.';return}
+  if(!confirm('Reverse '+money(item.amount)+' against '+item.invoice+'? A reversing journal will be posted; this action is auditable.'))return;
+  try{await api('/billing/payments/'+item.id+'/reverse','POST',{requestId:crypto.randomUUID(),reason:reason.trim()});await refresh();notice('Payment reversal posted; invoice balance recalculated.')}
+  catch(e){status.textContent=e.message}
+ });
+ const credits=data.credits||[];
+ el.querySelector('#credit-register').innerHTML='<div class="tablewrap"><table><thead><tr><th>Number</th><th>Invoice</th><th>Amount</th><th>Reason</th><th>Created</th></tr></thead><tbody>'+credits.map(c=>'<tr><td>'+esc(c.number)+'</td><td>'+esc(c.invoice)+'</td><td>'+esc(money(c.amount))+'</td><td>'+esc(c.reason)+'</td><td>'+esc(c.created_at)+'</td></tr>').join('')+'</tbody></table></div>';
+ el.querySelector('#bank-refresh').onclick=refresh;
+}
+function financialLedger(el){
+ const journals=data.ledger||[],trial=data.trial||[];
+ const debit=trial.reduce((n,x)=>n+Number(x.debit),0),credit=trial.reduce((n,x)=>n+Number(x.credit),0);
+ el.innerHTML+='<h1>Financial journals and trial balance</h1><p class="sub">Immutable double-entry postings for issued invoices, cash receipts, reversals and credit notes. Historical entries are marked as opening postings.</p><div class="grid"><div class="card"><small>Total debits</small><div class="metric">'+esc(money(debit))+'</div></div><div class="card"><small>Total credits</small><div class="metric">'+esc(money(credit))+'</div></div><div class="card"><small>Journal balance</small><div class="metric">'+esc(money(debit-credit))+'</div></div></div><div class="card topgap"><h2>Account balances</h2><div class="tablewrap"><table><thead><tr><th>Account</th><th>Debits</th><th>Credits</th><th>Net</th></tr></thead><tbody>'+trial.map(x=>'<tr><td>'+esc(x.account_code)+'</td><td>'+esc(money(x.debit))+'</td><td>'+esc(money(x.credit))+'</td><td>'+esc(money(x.net))+'</td></tr>').join('')+'</tbody></table></div></div><div class="card topgap"><h2>Recent journal lines</h2><div class="tablewrap"><table><thead><tr><th>Date</th><th>Source</th><th>Description</th><th>Account</th><th>Debit</th><th>Credit</th></tr></thead><tbody>'+journals.map(j=>'<tr><td>'+esc(j.posted_at)+'</td><td>'+esc(j.source_type)+'</td><td>'+esc(j.memo)+'</td><td>'+esc(j.account_code)+'</td><td>'+esc(money(j.debit))+'</td><td>'+esc(money(j.credit))+'</td></tr>').join('')+'</tbody></table></div></div>';
+}
+
 function numberGb(bytes){return ((Number(bytes)||0)/1073741824).toFixed(2)+' GB'}
 function radiusUsage(el){
  const today=new Date().toISOString().slice(0,7);
@@ -327,12 +408,14 @@ function details(collection,r){
   btn('Issue invoice',()=>{if(confirm('Issue invoice '+r.number+'?'))run('/invoices/'+r.id+'/issue')});
  if(collection==='invoices'&&role==='admin'&&r.status==='issued')
   btn('Record payment',()=>{d.close();payment(r)});
+ if(collection==='invoices'&&role==='admin'&&r.status==='issued'&&Number(r.outstanding)>0)
+  btn('Issue credit note',()=>{d.close();creditNote(r)});
 }
 function payment(invoice){
  const d=dialog('<h2>Record payment · '+esc(invoice.number)+'</h2><form id="pay"><label>Amount (ZAR)</label><input name="amount" type="number" min="0.01" step="0.01" required><label>Reference</label><input name="reference" required><p id="err" class="error"></p><button class="primary">Save payment</button><button type="button" id="cancel">Cancel</button></form>');
  d.querySelector('#cancel').onclick=()=>d.close();
  d.querySelector('#pay').onsubmit=async e=>{e.preventDefault();const raw=Object.fromEntries(new FormData(e.target));
-  try{await api('/payments','POST',{invoiceId:invoice.id,amount:Number(raw.amount),reference:raw.reference});d.close();await refresh()}catch(err){d.querySelector('#err').textContent=err.message}};
+  try{await api('/payments','POST',{invoiceId:invoice.id,amount:Number(raw.amount),reference:raw.reference,requestId:crypto.randomUUID()});d.close();await refresh()}catch(err){d.querySelector('#err').textContent=err.message}};
 }
 logout.onclick=async()=>{try{await api('/logout','POST');csrf='';await boot()}catch(err){notice(err.message,true)}};
 boot();
