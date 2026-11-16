@@ -7,7 +7,7 @@ using Npgsql;
 
 namespace NetForge.Api;
 
-public sealed record PaymentPostInput(Guid InvoiceId, decimal Amount, string Reference, Guid? RequestId);
+public sealed record PaymentPostInput(Guid InvoiceId, decimal Amount, string Reference, Guid? RequestId = null);
 public sealed record BankUploadInput(string BankName, string Filename, string Csv, bool Confirm);
 public sealed record BankAllocationInput(Guid InvoiceId, decimal Amount, Guid RequestId);
 public sealed record PaymentReversalInput(Guid RequestId, string Reason);
@@ -86,7 +86,7 @@ public static class FinancialAccounting
         await using var conn=await db.OpenConnectionAsync();
         await using var tx=await conn.BeginTransactionAsync();
         var invoice=await LockedInvoice(conn,(NpgsqlTransaction)tx,id);
-        if(invoice is null || (string)invoice["status"]!!="draft")
+        if(invoice is null || ((string)invoice["status"]!) != "draft")
             return Results.Conflict(new{error="Invoice must exist and be a draft"});
         var total=(decimal)invoice["total"]!;
         await Exec(conn,(NpgsqlTransaction)tx,

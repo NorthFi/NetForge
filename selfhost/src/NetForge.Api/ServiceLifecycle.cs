@@ -14,10 +14,10 @@ public static class ServiceLifecycle
     private const string HasOverdueInvoice = """
         EXISTS (
           SELECT 1 FROM invoices i
+          JOIN invoice_balances b ON b.invoice_id=i.id
           WHERE i.customer_id=s.customer_id AND i.status='issued'
             AND i.due_date IS NOT NULL AND i.due_date<CURRENT_DATE-@days
-            AND i.total>COALESCE(
-              (SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id=i.id),0)
+            AND b.outstanding>0
         )
         """;
 

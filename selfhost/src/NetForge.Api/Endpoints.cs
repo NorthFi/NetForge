@@ -414,11 +414,10 @@ public static class Endpoints
         {
             if(!Role(ctx,"admin","dispatcher"))return Forbidden();
             return Results.Ok(await Store.Rows(db,"""
-                SELECT i.*,c.account,COALESCE(sum(p.amount),0) AS paid,
-                       i.total-COALESCE(sum(p.amount),0) AS outstanding
+                SELECT i.*,c.account,b.paid,b.credited,b.outstanding
                 FROM invoices i JOIN customers c ON c.id=i.customer_id
-                LEFT JOIN payments p ON p.invoice_id=i.id
-                GROUP BY i.id,c.account ORDER BY i.created_at DESC LIMIT 3000
+                JOIN invoice_balances b ON b.invoice_id=i.id
+                ORDER BY i.created_at DESC LIMIT 3000
                 """));
         });
         api.MapPost("/invoices",async (HttpContext ctx,NpgsqlDataSource db,InvoiceInput body) =>
@@ -453,43 +452,9 @@ public static class Endpoints
             await Store.Audit(db,Actor(ctx),"draft-monthly","invoice",body.Period.ToString("yyyy-MM",CultureInfo.InvariantCulture));
             return Results.Ok(new {created=invoiceRows.Count,note="Drafts only. No tax calculation, delivery or payment capture."});
         });
-        api.MapPost("/invoices/{id:guid}/issue",async (Guid id,HttpContext ctx,NpgsqlDataSource db) =>
-        {
-            if(!IsAdmin(ctx))return Forbidden();
-            var n=await Store.Execute(db,
-                "UPDATE invoices SET status='issued' WHERE id=@id AND status='draft'",Store.P("id",id));
-            if(n==0)return Results.Conflict(new {error="Invoice must exist and be draft"});
-            await Store.Audit(db,Actor(ctx),"issue","invoice",id.ToString());
-            return Results.Ok(new {ok=true});
-        });
-        api.MapPost("/payments",async (HttpContext ctx,NpgsqlDataSource db,PaymentInput body) =>
-        {
-            if(!IsAdmin(ctx))return Forbidden();
-            if(body.Amount<=0||body.Reference?.Length is null or 0 or >160)
-                return Invalid("Payment requires a positive amount and reference");
-            await using var conn=await db.OpenConnectionAsync();
-            await using var tx=await conn.BeginTransactionAsync();
-            var invoice=await InTransaction(conn,(NpgsqlTransaction)tx,
-                "SELECT total,status FROM invoices WHERE id=@id FOR UPDATE",Store.P("id",body.InvoiceId));
-            if(invoice.Count==0)return Results.NotFound();
-            if((string)invoice[0]["status"]! is not ("issued" or "paid"))
-                return Invalid("Only issued invoices accept payments");
-            var paid=await InTransaction(conn,(NpgsqlTransaction)tx,
-                "SELECT COALESCE(sum(amount),0) AS total FROM payments WHERE invoice_id=@id",
-                Store.P("id",body.InvoiceId));
-            var outstanding=(decimal)invoice[0]["total"]!-(decimal)paid[0]["total"]!;
-            if(body.Amount>outstanding)return Results.Conflict(new {error="Payment exceeds outstanding balance"});
-            await ExecTx(conn,(NpgsqlTransaction)tx,"""
-                INSERT INTO payments(invoice_id,amount,reference) VALUES(@i,@a,@ref)
-                """,Store.P("i",body.InvoiceId),Store.P("a",body.Amount),
-                Store.P("ref",body.Reference.Trim()));
-            if(body.Amount==outstanding)
-                await ExecTx(conn,(NpgsqlTransaction)tx,
-                    "UPDATE invoices SET status='paid' WHERE id=@id",Store.P("id",body.InvoiceId));
-            await AuditTx(conn,(NpgsqlTransaction)tx,Actor(ctx),"payment","invoice",body.InvoiceId.ToString());
-            await tx.CommitAsync();
-            return Results.Ok(new {ok=true,remaining=outstanding-body.Amount});
-        });
+        // Financial postings are atomic balanced journals, never ad-hoc sums.
+        api.MapPost("/invoices/{id:guid}/issue",FinancialAccounting.Issue);
+        api.MapPost("/payments",FinancialAccounting.ManualPayment);
         api.MapGet("/audit",async (HttpContext ctx,NpgsqlDataSource db) =>
         {
             if(!IsAdmin(ctx))return Forbidden();

@@ -154,6 +154,7 @@ Endpoints.Map(authorized);
 NetworkManagement.Map(authorized);
 ServiceLifecycle.Map(authorized);
 CustomerPortal.MapStaff(authorized);
+FinancialAccounting.Map(authorized);
 UsageAccounting.MapStaff(authorized);
 CustomerPortal.MapPortal(app);
 app.MapFallbackToFile("index.html");

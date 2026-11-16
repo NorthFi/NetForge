@@ -248,18 +248,19 @@ public static class CustomerPortal
         group.MapGet("/invoices",async(ClaimsPrincipal user,NpgsqlDataSource db)=>
             Results.Ok(await Store.Rows(db,"""
                 SELECT i.id,i.number,i.period,i.total,i.status,i.due_date,i.created_at,
-                       COALESCE(sum(p.amount),0) AS paid,
-                       i.total-COALESCE(sum(p.amount),0) AS outstanding
-                FROM invoices i LEFT JOIN payments p ON p.invoice_id=i.id
-                WHERE i.customer_id=@id AND i.status IN ('issued','paid')
-                GROUP BY i.id ORDER BY i.created_at DESC LIMIT 500
+                       b.paid,b.credited,b.outstanding
+                FROM invoices i JOIN invoice_balances b ON b.invoice_id=i.id
+                WHERE i.customer_id=@id AND i.status IN ('issued','paid','settled')
+                ORDER BY i.created_at DESC LIMIT 500
                 """,Store.P("id",Customer(user)))));
 
         group.MapGet("/payments",async(ClaimsPrincipal user,NpgsqlDataSource db)=>
             Results.Ok(await Store.Rows(db,"""
-                SELECT p.id,p.amount,p.reference,p.received_at,i.number AS invoice
+                SELECT p.id,p.amount,p.reference,p.received_at,i.number AS invoice,
+                       (r.id IS NOT NULL) AS reversed
                 FROM payments p JOIN invoices i ON i.id=p.invoice_id
-                WHERE i.customer_id=@id AND i.status IN ('issued','paid')
+                LEFT JOIN payment_reversals r ON r.payment_id=p.id
+                WHERE i.customer_id=@id AND i.status IN ('issued','paid','settled')
                 ORDER BY p.received_at DESC LIMIT 500
                 """,Store.P("id",Customer(user)))));
 
