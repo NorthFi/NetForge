@@ -35,6 +35,7 @@ sql {
  groupcheck_table = "radgroupcheck"
  groupreply_table = "radgroupreply"
  usergroup_table = "radusergroup"
+ group_attribute = "SQL-Group"
  read_groups = yes
  read_clients = yes
  client_table = "nas"
