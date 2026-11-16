@@ -35,7 +35,9 @@ jobs:
       - name: Validate C# and NuGet references
         run: dotnet build selfhost/src/NetForge.Api/NetForge.Api.csproj --configuration Release
       - name: Validate browser JavaScript
-        run: node --check selfhost/web/app.js
+        run: |
+          node --check selfhost/web/app.js
+          node --check selfhost/web/portal/app.js
       - name: Validate FreeRADIUS bootstrap shell
         run: sh -n selfhost/radius/entrypoint.sh
       - name: Check compose syntax
