@@ -1,0 +1,12 @@
+# root/selfhost/Caddyfile
+# Private HTTPS using the built-in Caddy CA; trust its root only on approved clients.
+{$NETFORGE_DOMAIN:netforge.localhost} {
+    tls internal
+    encode zstd gzip
+    reverse_proxy api:8080
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+    }
+}

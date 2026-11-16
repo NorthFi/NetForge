@@ -25,6 +25,7 @@ selfhost/
     style.css
     app.js
   Dockerfile
+  Caddyfile
   compose.yaml
   .env.example
 ```
@@ -43,12 +44,14 @@ selfhost/
 2. Run `cd selfhost` and copy `.env.example` to `.env`.
 3. Replace `POSTGRES_PASSWORD` and `NETFORGE_ADMIN_PASSWORD` with **distinct**, strong random strings; the database password must contain only letters, numbers, `_`, `.`, or `-` because FreeRADIUS config interpolates it at startup. Placeholder strings beginning `REPLACE_` are rejected by the application.
 4. Set `RADIUS_BIND_IP` to the machine's **private** RADIUS listening address, and configure your firewall to allow UDP 1812/1813 only from approved NAS IP addresses. If you cannot bind a private address, restrict public UDP 1812/1813 at your router and host firewall.
-5. Run `docker compose up -d --build`.
-6. Place HTTPS termination in front of `127.0.0.1:8080`, which is intentionally only bound to loopback. Visit the TLS URL and sign in using the administrator credentials.
+5. Run `docker compose --profile https up -d --build` to enable the included private HTTPS reverse proxy. Alternatively, use `docker compose up -d --build` if you already have a trusted external HTTPS reverse proxy.
+6. For the included proxy, browse to `https://netforge.localhost:8443/` on the Docker host. Caddy uses an internal CA: you must trust its root certificate on authorized workstations. With an existing reverse proxy, forward authenticated HTTPS traffic to `127.0.0.1:8080`.
 7. Create a branch, highsite, sector, customer, package, and pending subscriber service. Use **Set/rotate RADIUS password** to provision the service's FreeRADIUS `radcheck` entry.
 8. Under **RADIUS NAS**, add each router with its IPv4 address and long random shared secret. Then run `docker compose restart radius`. SQL NAS records are loaded **at FreeRADIUS startup**, not dynamically.
 9. Configure your MikroTik or other NAS to send auth/accounting packets to the host. Verify FreeRADIUS logs and NetForge's RADIUS Sessions screen.
 10. Schedule PostgreSQL backups and test restores before loading production data.
+
+**Caddy internal TLS:** Run `docker compose exec proxy cat /data/caddy/pki/authorities/local/root.crt`, then save and import that certificate into the approved workstation's trusted root store after verifying its origin. For other workstations, set `NETFORGE_DOMAIN` to a DNS name that resolves to the host and set `NETFORGE_HTTPS_BIND_IP` to its private LAN/VPN address. Never distribute the CA private key. For a public hostname with a trusted certificate, configure your own HTTPS reverse proxy or Caddy ACME separately.
 
 **Important:** The API requires HTTPS for its Secure session cookie. Direct HTTP access on the loopback port is for a proxy connection or health-check only. A bare HTTP browser login may not persist.
 
@@ -93,4 +96,4 @@ This branch **intentionally excludes the RF link planner**. It retains basic WIS
 
 ## Status
 
-Initial code with automated build verification; not deployed or acceptance-tested against production NAS devices. Require TLS, backups, NAS isolation, auditing, security tests and vendor-specific RADIUS acceptance tests prior to a live cutover.
+Automated CI validates .NET 11 compilation, PostgreSQL API workflows, Docker images, and real FreeRADIUS PAP accept/reject tests including suspension. This does not replace RouterOS NAS acceptance tests, disaster recovery verification or a security assessment. Require TLS, backups, NAS isolation, auditing, security tests and vendor-specific RADIUS acceptance tests prior to a live cutover.
