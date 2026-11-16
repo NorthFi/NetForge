@@ -62,6 +62,7 @@ api GET /radius/nas "" 200
 if grep -q 'ci-very-long-unique-nas-secret' "$BASE/result.json"; then echo "NAS shared secret leaked"; exit 1; fi
 api GET /radius/sessions "" 200
 api POST /tickets "{\"customerId\":\"$CUSTOMER\",\"highsiteId\":\"$SITE\",\"subject\":\"Test customer outage\",\"description\":\"No connection\",\"type\":\"customer\",\"priority\":\"high\"}" 201
+TICKET="$(id)"
 api POST /billing/monthly-drafts '{"period":"2026-11-01"}' 200
 grep -q '"created":1' "$BASE/result.json"
 api POST /billing/monthly-drafts '{"period":"2026-11-01"}' 200
@@ -151,5 +152,45 @@ wait "$MOCK_PID"
 MOCK_PID=""
 api GET /radius/operations "" 200
 if grep -q 'mock-radius-shared-secret-2026' "$BASE/result.json"; then echo "Secret leaked in operation history" >&2; exit 1; fi
+
+
+# Portal identity is separate from staff and scoped to the enrolled customer.
+api POST /customer-portal/accounts "{\"customerId\":\"$CUSTOMER\",\"username\":\"CI-PORTAL\",\"password\":\"CI-Customer-Portal-Password-2026\"}" 201
+api GET /customer-portal/accounts "" 200
+if grep -q 'password_hash' "$BASE/result.json"; then echo "Portal hash leaked"; exit 1; fi
+api POST "/tickets/$TICKET/messages" '{"visibility":"public","body":"Public customer update"}' 201
+api POST "/tickets/$TICKET/messages" '{"visibility":"internal","body":"Internal troubleshooting note"}' 201
+PORTALURL="$BASEURL/api/portal"
+PSTATUS="$(curl -sS -D "$BASE/portal.headers" -o "$BASE/result.json" -w '%{http_code}' \
+  -H 'Content-Type: application/json' -X POST "$PORTALURL/login" \
+  --data '{"username":"CI-PORTAL","password":"CI-Customer-Portal-Password-2026"}')"
+test "$PSTATUS" = 200
+PORTAL_COOKIE="$(grep -i '^set-cookie: NetForge.Portal=' "$BASE/portal.headers" |
+  head -1 | sed -E 's/^[^:]*: ([^;]*).*/\1/' | tr -d '\r')"
+PORTAL_CSRF="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["csrf"])' "$BASE/result.json")"
+test -n "$PORTAL_COOKIE"
+test -n "$PORTAL_CSRF"
+CODE="$(curl -sS -o "$BASE/result.json" -w '%{http_code}' \
+  -H "Cookie: $PORTAL_COOKIE" "$PORTALURL/profile")"
+test "$CODE" = 200
+grep -q 'CI-001' "$BASE/result.json"
+CODE="$(curl -sS -o "$BASE/result.json" -w '%{http_code}' \
+  -H "Cookie: $PORTAL_COOKIE" "$PORTALURL/tickets/$TICKET/messages")"
+test "$CODE" = 200
+grep -q 'Public customer update' "$BASE/result.json"
+if grep -q 'Internal troubleshooting note' "$BASE/result.json"; then
+  echo "Staff-only notes leaked to subscribers"; exit 1
+fi
+CODE="$(curl -sS -o "$BASE/result.json" -w '%{http_code}' -X POST \
+  -H "Cookie: $PORTAL_COOKIE" -H 'Content-Type: application/json' \
+  --data '{"subject":"CSRF bypass","description":"Missing token"}' "$PORTALURL/tickets")"
+test "$CODE" = 403
+CODE="$(curl -sS -o "$BASE/result.json" -w '%{http_code}' \
+  -H "Cookie: $PORTAL_COOKIE" "$BASEURL/api/customers")"
+test "$CODE" = 401
+api PUT "/customer-portal/accounts/$CUSTOMER" '{"action":"disable"}' 200
+CODE="$(curl -sS -o "$BASE/result.json" -w '%{http_code}' \
+  -H "Cookie: $PORTAL_COOKIE" "$PORTALURL/profile")"
+test "$CODE" = 401
 
 echo "NetForge .NET 11 / PostgreSQL API smoke passed."
