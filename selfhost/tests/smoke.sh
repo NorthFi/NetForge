@@ -290,7 +290,7 @@ PY
 BANK_PREVIEW="$(python3 - <<'PY'
 import json
 print(json.dumps({"bankName":"CI-FNB","filename":"ci-statement.csv",
-"csv":"Date,Amount,Description,Reference,TransactionId\\n2026-11-16,200.00,Client EFT,CI-001,CI-BANK-01\\n2026-11-16,-25.00,Bank charge,CHARGE,CI-BANK-02\\n2026-11-16,200.00,Duplicate,CI-001,CI-BANK-01\\n",
+"csv":"Date,Amount,Description,Reference,TransactionId\n2026-11-16,200.00,Client EFT,CI-001,CI-BANK-01\n2026-11-16,-25.00,Bank charge,CHARGE,CI-BANK-02\n2026-11-16,200.00,Duplicate,CI-001,CI-BANK-01\n",
 "confirm":False}))
 PY
 )"
