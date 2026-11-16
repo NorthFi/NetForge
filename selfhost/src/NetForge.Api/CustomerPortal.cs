@@ -226,6 +226,8 @@ public static class CustomerPortal
             return Results.Ok(new{ok=true});
         });
 
+        UsageAccounting.MapPortal(group);
+
         group.MapGet("/profile",async(ClaimsPrincipal user,NpgsqlDataSource db)=>
         {
             var data=await Store.Rows(db,"""
