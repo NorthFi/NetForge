@@ -9,6 +9,14 @@ set -eu
 for item in "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$POSTGRES_DB"; do
  case "$item" in *[!A-Za-z0-9_.-]*|'') echo "Invalid PostgreSQL credential characters" >&2; exit 1;; esac
 done
+# DB must have completed its schema initialization before rlm_sql loads NAS clients.
+attempt=0
+until PGPASSWORD="$POSTGRES_PASSWORD" psql -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+    -Atqc "SELECT 1 FROM radcheck LIMIT 1" >/dev/null 2>&1; do
+  attempt=$((attempt+1))
+  if [ "$attempt" -ge 45 ]; then echo "FreeRADIUS database schema unavailable" >&2; exit 1; fi
+  sleep 2
+done
 R=/etc/freeradius/3.0
 cat > "$R/mods-available/sql" <<EOF
 sql {
@@ -43,6 +51,7 @@ sql {
  \$INCLUDE \${modconfdir}/\${.:name}/main/\${dialect}/queries.conf
 }
 EOF
+chmod 0600 "$R/mods-available/sql"
 ln -sf ../mods-available/sql "$R/mods-enabled/sql"
 # Default authorize/accounting/pre-proxy scripts shipped by FreeRADIUS handle PAP,
 # CHAP, MS-CHAP and SQL using the stock site. Remove comments only on bare sql lines.

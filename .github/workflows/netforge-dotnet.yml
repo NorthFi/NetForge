@@ -48,3 +48,5 @@ jobs:
         run: dotnet publish selfhost/src/NetForge.Api/NetForge.Api.csproj -c Release -o /tmp/netforge-publish --no-restore
       - name: Integration test with PostgreSQL 17
         run: bash selfhost/tests/smoke.sh
+      - name: Build and exercise FreeRADIUS with PostgreSQL-backed subscriber
+        run: bash selfhost/tests/radius-smoke.sh
