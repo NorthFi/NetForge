@@ -22,11 +22,15 @@ selfhost/
     CustomerPortal.cs
     UsageAccounting.cs
     FinancialAccounting.cs
+    BillingScheduler.cs
+    Notifications.cs
+    NetworkMonitoring.cs
   db/
     001_init.sql
     002_radius_management.sql
     003_subscriber_portal_accounting.sql
     004_financial_ledger_reconciliation.sql
+    005_operations_automation.sql
   radius/
     Dockerfile
     entrypoint.sh
@@ -110,6 +114,30 @@ This phase introduces transactional, ZAR-denominated double-entry postings and h
 
 **Scope limit:** This is an auditable foundation, **not a certified accounting or taxation system**. There is no VAT determination, valid South African tax-invoice PDF, bank API feed, gateway, refunds/chargebacks, multi-currency support, formal bank settlement or automatic matching. Validate controls with an accountant and test full backup/restore before using customer financial data.
 
+## Phase 5: Monthly billing, messaging and network checks
+
+The new **Invoice Automation**, **Notifications**, and **Network Monitoring**
+screens are administrator-controlled. Everything that can create invoices,
+send messages or probe live devices is **disabled by default**.
+See [Operations automation and runbook](selfhost/OPERATIONS_AUTOMATION.md)
+for deployment, provider configuration, routing/firewall requirements and
+risk controls.
+
+- UTC monthly invoice generation is idempotent per customer/month and
+  freezes active subscription prices in `invoice_items`.
+- Issuance is independently opt-in; it posts balanced journals and may
+  enqueue customer emails only with global enablement plus per-customer
+  consent. Due dates are not backdated into immediate delinquency when
+  a period is generated late.
+- A durable SMTP STARTTLS or Telegram notification outbox supports
+  retry/backoff, status visibility and sanitized errors. Delivery is
+  **at least once**, so external duplicates remain possible.
+- A conservative TCP service monitor probes only inventoried NAS or
+  equipment IPv4 addresses, tracks sustained failures and recovery,
+  and optionally queues operations notifications.
+- No SNMPv3, ICMP, RF quality statistics, VAT/proration, PDF invoice
+  delivery, or automatic bank payment matching is included yet.
+
 ## Current capabilities
 
 - Staff login with PBKDF2 password hashes, cookie authentication, role checks and request CSRF tokens.
@@ -145,7 +173,7 @@ Set `Database__ConnectionString`, `NETFORGE_ADMIN_USER`, `NETFORGE_ADMIN_PASSWOR
 
 ## Current gaps versus full Splynx functionality
 
-Do **not** assume this is complete Splynx functionality. Missing major components include multi-factor customer and staff authentication, payment gateways and automatic bank feeds, automated invoicing with VAT/tax compliance, refunds, prepaid vouchers, usage-rating reconciliation, true live-session CoA speed changes, large-scale NAS automation, TR-069/USP ACS, SNMP monitoring and alerts, scoped API tokens, backup/restore UI, VoIP CDR billing, technician dispatch, notification gateways, procurement, customer contracts, granular RBAC, multi-tenant separation, and high availability.
+Do **not** assume this is complete Splynx functionality. Missing major components include multi-factor authentication, payment gateways and automatic bank feeds, VAT-compliant invoicing and proration, refunds and prepaid vouchers, usage-based rating, true live-session CoA speed changes, NAS configuration automation, TR-069/USP ACS, ICMP/SNMPv3/RF telemetry, notification templates and confirmed external delivery, scoped API tokens, backup/restore UI, VoIP CDR billing, technician dispatch, procurement, contracts, granular RBAC, multi-tenant isolation, and high availability.
 
 This branch **intentionally excludes the RF link planner**. It retains basic WISP highsite/sector/subscriber relationships and equipment records.
 
