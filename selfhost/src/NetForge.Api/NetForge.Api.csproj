@@ -8,6 +8,6 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
   <ItemGroup><PackageReference Include="Npgsql" Version="10.0.3" /></ItemGroup>
-  <ItemGroup><Content Include="../../db/001_init.sql" Link="db/001_init.sql" CopyToOutputDirectory="Always" /></ItemGroup>
+  <ItemGroup><Content Include="../../db/*.sql" Link="db/%(Filename)%(Extension)" CopyToOutputDirectory="Always" /></ItemGroup>
   <ItemGroup><Content Include="../../web/**" Link="wwwroot/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="Always" /></ItemGroup>
 </Project>

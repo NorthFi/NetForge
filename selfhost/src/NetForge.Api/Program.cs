@@ -39,6 +39,7 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         };
     });
 builder.Services.AddAuthorization();
+builder.Services.AddHostedService<BillingEnforcementWorker>();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
@@ -148,5 +149,7 @@ authorized.MapPost("/logout", async (HttpContext ctx) =>
 });
 
 Endpoints.Map(authorized);
+NetworkManagement.Map(authorized);
+ServiceLifecycle.Map(authorized);
 app.MapFallbackToFile("index.html");
 await app.RunAsync();

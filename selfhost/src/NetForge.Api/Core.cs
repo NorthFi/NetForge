@@ -11,11 +11,19 @@ public static class Store
 {
     public static async Task Initialize(NpgsqlDataSource pool, IConfiguration settings)
     {
-        var file = Path.Combine(AppContext.BaseDirectory, "db", "001_init.sql");
-        if (!File.Exists(file)) throw new InvalidOperationException("Database schema file missing");
+        var directory = Path.Combine(AppContext.BaseDirectory, "db");
+        if (!Directory.Exists(directory)) throw new InvalidOperationException("Database migrations directory missing");
+        var migrations = Directory.EnumerateFiles(directory, "*.sql", SearchOption.TopDirectoryOnly)
+            .OrderBy(path => path, StringComparer.Ordinal).ToArray();
+        if (migrations.Length == 0) throw new InvalidOperationException("Database migrations missing");
         await using var conn = await pool.OpenConnectionAsync();
-        await using (var cmd = new NpgsqlCommand(await File.ReadAllTextAsync(file), conn))
+        // These numbered scripts contain idempotent DDL; never skip new upgrades
+        // merely because an initial bootstrap already occurred.
+        foreach (var migration in migrations)
+        {
+            await using var cmd = new NpgsqlCommand(await File.ReadAllTextAsync(migration), conn);
             await cmd.ExecuteNonQueryAsync();
+        }
 
         var username = (settings["NETFORGE_ADMIN_USER"] ?? "").Trim();
         var password = settings["NETFORGE_ADMIN_PASSWORD"] ?? "";

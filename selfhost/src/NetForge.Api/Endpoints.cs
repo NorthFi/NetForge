@@ -158,20 +158,22 @@ public static class Endpoints
             if (n==0) return Results.NotFound();
             if (body.Status is "suspended" or "cancelled")
             {
-                // Revoking check items disables *new* authentication; an already
-                // established PPPoE session needs a separate NAS CoA/Disconnect.
-                await using var revoke=new NpgsqlCommand("""
-                    DELETE FROM radcheck WHERE attribute='Cleartext-Password' AND
-                    username IN (SELECT username FROM services WHERE customer_id=@id)
-                    """,conn,(NpgsqlTransaction)tx);
-                revoke.Parameters.AddWithValue("id",id);
-                await revoke.ExecuteNonQueryAsync();
-                await using var services=new NpgsqlCommand("""
-                    UPDATE services SET state='suspended',changed_at=now()
+                // Preserve PPPoE passwords and add an explicit Reject check item.
+                // Session termination is a separately authorized network action.
+                await ExecTx(conn,(NpgsqlTransaction)tx,"""
+                    INSERT INTO radcheck(username,attribute,op,value)
+                    SELECT s.username,'Auth-Type',':=','Reject'
+                    FROM services s
+                    WHERE s.customer_id=@id AND s.state='active'
+                    AND NOT EXISTS(
+                      SELECT 1 FROM radcheck r
+                      WHERE r.username=s.username AND r.attribute='Auth-Type' AND r.value='Reject')
+                    """,Store.P("id",id));
+                await ExecTx(conn,(NpgsqlTransaction)tx,"""
+                    UPDATE services SET state='suspended',suspension_reason='manual',
+                    suspended_at=now(),changed_at=now()
                     WHERE customer_id=@id AND state='active'
-                    """,conn,(NpgsqlTransaction)tx);
-                services.Parameters.AddWithValue("id",id);
-                await services.ExecuteNonQueryAsync();
+                    """,Store.P("id",id));
             }
             await tx.CommitAsync();
             await Store.Audit(db,Actor(ctx),"update","customer",id.ToString());
@@ -214,7 +216,9 @@ public static class Endpoints
             if (!IsAdmin(ctx)) return Forbidden();
             if (string.IsNullOrWhiteSpace(body.Name)||body.Name.Length>160||
                 body.DownloadMbps<1||body.UploadMbps<1||body.MonthlyPrice<0||
-                (body.MikrotikRateLimit?.Length??0)>64)
+                (body.MikrotikRateLimit?.Length??0)>64 ||
+                (!string.IsNullOrWhiteSpace(body.MikrotikRateLimit) &&
+                 !NetworkRate.Valid(body.MikrotikRateLimit.Trim())))
                 return Invalid("Invalid package name, speeds, price or rate limit");
             var id=await Store.Insert(db,"""
                 INSERT INTO packages(name,download_mbps,upload_mbps,monthly_price,mikrotik_rate_limit)
@@ -230,8 +234,10 @@ public static class Endpoints
             Results.Ok(await Store.Rows(db,"""
                 SELECT s.id,s.customer_id,c.account,s.package_id,p.name AS package,
                        s.username,s.state,s.static_ipv4::text AS static_ipv4,
-                       s.created_at,s.changed_at,
-                       EXISTS(SELECT 1 FROM radcheck r WHERE r.username=s.username AND r.attribute='Cleartext-Password') AS radius_enabled
+                       s.created_at,s.changed_at,s.suspension_reason,s.suspended_at,s.resumed_at,
+                       (s.state='active' AND c.status='active' AND
+                         EXISTS(SELECT 1 FROM radcheck r WHERE r.username=s.username AND r.attribute='Cleartext-Password') AND
+                         NOT EXISTS(SELECT 1 FROM radcheck d WHERE d.username=s.username AND d.attribute='Auth-Type' AND d.value='Reject')) AS radius_enabled
                 FROM services s JOIN customers c ON c.id=s.customer_id
                 JOIN packages p ON p.id=s.package_id ORDER BY c.account
                 """)));
@@ -260,7 +266,7 @@ public static class Endpoints
             await using var tx=await conn.BeginTransactionAsync();
             var rows=await InTransaction(conn,(NpgsqlTransaction)tx,"""
                 SELECT s.username,s.state,s.static_ipv4::text AS ip,c.status AS customer_status,
-                       p.mikrotik_rate_limit AS rate
+                       p.mikrotik_rate_limit AS rate,p.upload_mbps,p.download_mbps
                 FROM services s JOIN customers c ON c.id=s.customer_id
                 JOIN packages p ON p.id=s.package_id WHERE s.id=@id FOR UPDATE OF s
                 """,Store.P("id",id));
@@ -283,40 +289,41 @@ public static class Endpoints
                 INSERT INTO radcheck(username,attribute,op,value)
                 VALUES (@u,'Cleartext-Password',':=',@pw)
                 """,Store.P("u",username),Store.P("pw",body.Password));
-            if(Value(service,"rate") is string rate && rate.Length>0)
-                await ExecTx(conn,(NpgsqlTransaction)tx,"""
-                    INSERT INTO radreply(username,attribute,op,value)
-                    VALUES (@u,'Mikrotik-Rate-Limit','=',@rate)
-                    """,Store.P("u",username),Store.P("rate",rate));
+            var effectiveRate=NetworkRate.Effective(
+                (int)service["upload_mbps"]!,(int)service["download_mbps"]!,
+                (string)service["rate"]!);
+            if(!NetworkRate.Valid(effectiveRate))
+                return Invalid("Package has an unsupported rate limit; fix package before provisioning.");
+            await ExecTx(conn,(NpgsqlTransaction)tx,"""
+                INSERT INTO radreply(username,attribute,op,value)
+                VALUES (@u,'Mikrotik-Rate-Limit','=',@rate)
+                """,Store.P("u",username),Store.P("rate",effectiveRate));
             if(Value(service,"ip") is string ip && ip.Length>0)
                 await ExecTx(conn,(NpgsqlTransaction)tx,"""
                     INSERT INTO radreply(username,attribute,op,value)
                     VALUES (@u,'Framed-IP-Address','=',@ip)
                     """,Store.P("u",username),Store.P("ip",ip));
-            await ExecTx(conn,(NpgsqlTransaction)tx,
-                "UPDATE services SET state='active',changed_at=now() WHERE id=@id",Store.P("id",id));
+            if((service["state"] as string)=="suspended")
+                await ServiceLifecycle.Reject(conn,(NpgsqlTransaction)tx,username);
+            await ExecTx(conn,(NpgsqlTransaction)tx,"""
+                UPDATE services SET state=CASE WHEN state='suspended' THEN 'suspended' ELSE 'active' END,
+                    changed_at=now() WHERE id=@id
+                """,Store.P("id",id));
             await AuditTx(conn,(NpgsqlTransaction)tx,Actor(ctx),"credentials-set","service",id.ToString());
             await tx.CommitAsync();
             return Results.Ok(new {ok=true,username,
-                note="New PPPoE authentications use these credentials. Existing sessions are not disconnected."});
+                note="Credentials stored. Suspended services remain blocked until explicitly reactivated; connected sessions are unchanged."});
         });
-        api.MapPost("/services/{id:guid}/suspend",async (Guid id,HttpContext ctx,NpgsqlDataSource db) =>
+        api.MapPost("/services/{id:guid}/suspend",async(Guid id,HttpContext ctx,NpgsqlDataSource db)=>
         {
-            if (!IsAdmin(ctx))return Forbidden();
-            await using var conn=await db.OpenConnectionAsync();
-            await using var tx=await conn.BeginTransactionAsync();
-            var row=await InTransaction(conn,(NpgsqlTransaction)tx,
-                "SELECT username FROM services WHERE id=@id FOR UPDATE",Store.P("id",id));
-            if(row.Count==0)return Results.NotFound();
-            await ExecTx(conn,(NpgsqlTransaction)tx,
-                "DELETE FROM radcheck WHERE username=@u AND attribute='Cleartext-Password'",
-                Store.P("u",(string)row[0]["username"]!));
-            await ExecTx(conn,(NpgsqlTransaction)tx,
-                "UPDATE services SET state='suspended',changed_at=now() WHERE id=@id",
-                Store.P("id",id));
-            await AuditTx(conn,(NpgsqlTransaction)tx,Actor(ctx),"suspend","service",id.ToString());
-            await tx.CommitAsync();
-            return Results.Ok(new {ok=true,note="New authentication denied. Active sessions need a separate disconnect."});
+            if(!IsAdmin(ctx))return Forbidden();
+            var result=await ServiceLifecycle.Suspend(db,id,Actor(ctx));
+            return result switch {
+                "ok" => Results.Ok(new{ok=true,
+                    note="New PPPoE authentications are rejected. Disconnect active sessions separately."}),
+                "notfound" => Results.NotFound(),
+                _ => Results.Conflict(new{error=result})
+            };
         });
 
         api.MapGet("/radius/nas",async (HttpContext ctx,NpgsqlDataSource db) =>
@@ -351,7 +358,7 @@ public static class Endpoints
         {
             if(!Role(ctx,"admin","dispatcher","technician"))return Forbidden();
             return Results.Ok(await Store.Rows(db,"""
-                SELECT radacctid,username,nasipaddress::text AS nas_ip,
+                SELECT radacctid,acctsessionid,username,nasipaddress::text AS nas_ip,
                        framedipaddress::text AS assigned_ip,callingstationid AS mac,
                        acctstarttime,acctupdatetime,acctstoptime,
                        acctinputoctets,acctoutputoctets,
