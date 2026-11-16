@@ -36,7 +36,7 @@ function table(items,columns){
 function render(){
  if(!snapshot)return login();
  const c=snapshot.customer;
- const tabs=['Overview','Services','Usage','Invoices','Tickets','Equipment','Profile'];
+ const tabs=['Overview','Services','Usage','Invoices','Tickets','Equipment','News','Help','Profile'];
  app.innerHTML='<main><h1>Hello, '+safe(c.name||c.account)+'</h1><p class="muted">Account '+safe(c.account)+' · '+safe(c.account_status||'Status not configured')+'</p><nav class="tabs" id="tabs" aria-label="Portal sections">'+tabs.map(t=>'<button data-view="'+safe(t)+'" class="'+(view===t?'active':'')+'">'+safe(t)+'</button>').join('')+'</nav><section id="content"></section></main>';
  app.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{view=b.dataset.view;render()});
  const target=app.querySelector('#content'),services=snapshot.services,tickets=snapshot.tickets,invoices=snapshot.invoices,payments=snapshot.payments;
@@ -61,6 +61,13 @@ function render(){
   target.querySelectorAll('tr[data-ticket]').forEach(tr=>tr.onclick=()=>ticket(tr.dataset.ticket));
  }else if(view==='Equipment'){
   target.innerHTML='<h2>My equipment</h2><p class="muted">For safety, management addresses and device credentials are not displayed here.</p>'+table(snapshot.equipment,[['name','Device'],['type','Model'],['category','Category'],['serial_number','Serial'],['ownership','Ownership'],['warranty_expiry','Warranty']]);
+ }else if(view==='News'){
+  const records=(snapshot.announcements||[]).slice().sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')));
+  target.innerHTML='<h2>Network announcements</h2><p class="muted">Published service updates and notices from your provider.</p>'+(records.map(a=>'<article class="card" style="margin:12px 0"><small>'+safe(a.category||'Announcement')+' · '+safe((a.created_at||'').slice(0,10))+'</small><h3>'+safe(a.name)+'</h3><p style="white-space:pre-wrap">'+safe(a.body||'')+'</p></article>').join('')||'<p class="muted">No published announcements.</p>');
+ }else if(view==='Help'){
+  const articles=(snapshot.articles||[]).slice().sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
+  target.innerHTML='<h2>Help centre</h2><p class="muted">Support articles provided by your ISP.</p>'+(articles.map(a=>'<article class="card" style="margin:12px 0"><small>'+safe(a.category||'General')+'</small><h3>'+safe(a.name)+'</h3><p style="white-space:pre-wrap">'+safe(a.body||'')+'</p></article>').join('')||'<p class="muted">No help articles have been published.</p>')+'<button id="help-ticket" class="primary">Still need assistance? Open a ticket</button>';
+  target.querySelector('#help-ticket').onclick=newTicket;
  }else if(view==='Profile'){
   target.innerHTML='<div class="grid"><div class="card"><h2>Profile</h2>'+[['Account',c.account],['Name',(c.name||'')+' '+(c.surname||'')],['Phone',c.phone],['Email',c.email],['Address',c.address],['Package',c.package]].map(([key,value])=>'<p><small>'+safe(key)+'</small><br><b>'+safe(value||'—')+'</b></p>').join('')+'</div><div class="card"><h2>Change portal password</h2><form id="passwordform"><label>Current password</label><input name="current_password" type="password" required autocomplete="current-password"><label>New password</label><input name="new_password" type="password" minlength="14" required autocomplete="new-password"><p id="pw-result" role="status"></p><button class="primary">Update password</button></form></div></div>';
   target.querySelector('#passwordform').onsubmit=async e=>{e.preventDefault();const values=Object.fromEntries(new FormData(e.target));
