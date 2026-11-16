@@ -193,4 +193,51 @@ CODE="$(curl -sS -o "$BASE/result.json" -w '%{http_code}' \
   -H "Cookie: $PORTAL_COOKIE" "$PORTALURL/profile")"
 test "$CODE" = 401
 
+
+# Track genuine per-interval counters rather than treating all cumulative
+# bytes as traffic in the month in which a session began.
+PGCONTAINER="$(docker ps --filter ancestor=postgres:17 --format '{{.ID}}' | head -n1)"
+test -n "$PGCONTAINER"
+docker exec "$PGCONTAINER" psql -U netforge_ci -d netforge_ci -v ON_ERROR_STOP=1 -c "
+  INSERT INTO radacct(acctsessionid,acctuniqueid,username,nasipaddress,
+     acctstarttime,acctupdatetime,acctinputoctets,acctoutputoctets)
+  VALUES('CI-INTERIM','CI-INTERIM-UNIQUE','ci-pppoe@example.test','192.0.2.1',
+    '2026-10-31 23:50:00+00','2026-11-01 00:10:00+00',2147483648,1073741824);
+" >/dev/null
+api GET '/radius/usage-reconciled?period=2026-10' "" 200
+python3 - "$BASE/result.json" <<'PY'
+import json,sys
+records=json.load(open(sys.argv[1]))['records']
+r=next(x for x in records if x['username']=='ci-pppoe@example.test')
+assert r['upload_bytes']==1073741824,r
+assert r['download_bytes']==536870912,r
+assert r['observed_intervals']==1,r
+PY
+docker exec "$PGCONTAINER" psql -U netforge_ci -d netforge_ci -v ON_ERROR_STOP=1 -c "
+  UPDATE radacct SET acctupdatetime='2026-11-01 00:15:00+00'
+  WHERE acctuniqueid='CI-INTERIM-UNIQUE';
+  UPDATE radacct SET acctupdatetime='2026-11-01 00:20:00+00',
+    acctinputoctets=3221225472,acctoutputoctets=2147483648
+  WHERE acctuniqueid='CI-INTERIM-UNIQUE';
+" >/dev/null
+api GET '/radius/usage-reconciled?period=2026-11' "" 200
+python3 - "$BASE/result.json" <<'PY'
+import json,sys
+r=next(x for x in json.load(open(sys.argv[1]))['records'] if x['username']=='ci-pppoe@example.test')
+assert r['upload_bytes']==2147483648,r
+assert r['download_bytes']==1610612736,r
+assert r['observed_intervals']==2,r
+PY
+docker exec "$PGCONTAINER" psql -U netforge_ci -d netforge_ci -v ON_ERROR_STOP=1 -c "
+  UPDATE radacct SET acctupdatetime='2026-11-01 00:25:00+00',acctinputoctets=10
+  WHERE acctuniqueid='CI-INTERIM-UNIQUE';
+" >/dev/null
+api GET '/radius/usage-reconciled?period=2026-11' "" 200
+python3 - "$BASE/result.json" <<'PY'
+import json,sys
+r=next(x for x in json.load(open(sys.argv[1]))['records'] if x['username']=='ci-pppoe@example.test')
+assert r['upload_bytes']==2147483648,r
+assert r['observed_intervals']==2,r
+PY
+
 echo "NetForge .NET 11 / PostgreSQL API smoke passed."
