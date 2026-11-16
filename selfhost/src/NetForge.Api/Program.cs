@@ -37,7 +37,8 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             return Task.CompletedTask;
         };
-    });
+    })
+    .AddCookie(CustomerPortal.Scheme,CustomerPortal.ConfigureCookie);
 builder.Services.AddAuthorization();
 builder.Services.AddHostedService<BillingEnforcementWorker>();
 builder.Services.AddRateLimiter(options =>
@@ -94,6 +95,7 @@ app.UseRateLimiter();
 app.Use(async (ctx, next) =>
 {
     if (ctx.Request.Path.StartsWithSegments("/api") &&
+        !ctx.Request.Path.StartsWithSegments("/api/portal") &&
         !(HttpMethods.IsGet(ctx.Request.Method) || HttpMethods.IsHead(ctx.Request.Method)) &&
         ctx.User.Identity?.IsAuthenticated == true)
     {
@@ -151,5 +153,8 @@ authorized.MapPost("/logout", async (HttpContext ctx) =>
 Endpoints.Map(authorized);
 NetworkManagement.Map(authorized);
 ServiceLifecycle.Map(authorized);
+CustomerPortal.MapStaff(authorized);
+UsageAccounting.MapStaff(authorized);
+CustomerPortal.MapPortal(app);
 app.MapFallbackToFile("index.html");
 await app.RunAsync();
