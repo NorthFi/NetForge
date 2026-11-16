@@ -17,12 +17,52 @@ public static class Store
             .OrderBy(path => path, StringComparer.Ordinal).ToArray();
         if (migrations.Length == 0) throw new InvalidOperationException("Database migrations missing");
         await using var conn = await pool.OpenConnectionAsync();
-        // These numbered scripts contain idempotent DDL; never skip new upgrades
-        // merely because an initial bootstrap already occurred.
-        foreach (var migration in migrations)
+        // Acquire a transaction-scoped lock so multiple API replicas cannot race
+        // schema updates or repeatedly disable/re-enable RADIUS SQL triggers.
+        await using (var transaction = await conn.BeginTransactionAsync())
         {
-            await using var cmd = new NpgsqlCommand(await File.ReadAllTextAsync(migration), conn);
-            await cmd.ExecuteNonQueryAsync();
+            await using (var mutex = new NpgsqlCommand(
+                "SELECT pg_advisory_xact_lock(3100311)",conn,(NpgsqlTransaction)transaction))
+                await mutex.ExecuteNonQueryAsync();
+            await using (var table = new NpgsqlCommand("""
+                CREATE TABLE IF NOT EXISTS netforge_schema_migrations(
+                    filename text PRIMARY KEY,
+                    checksum char(64) NOT NULL,
+                    applied_at timestamptz NOT NULL DEFAULT now()
+                )
+                """,conn,(NpgsqlTransaction)transaction))
+                await table.ExecuteNonQueryAsync();
+            foreach (var migration in migrations)
+            {
+                var name=Path.GetFileName(migration);
+                var bytes=await File.ReadAllBytesAsync(migration);
+                var checksum=Convert.ToHexString(SHA256.HashData(bytes));
+                await using var queryMigration = new NpgsqlCommand(
+                    "SELECT checksum FROM netforge_schema_migrations WHERE filename=@name",
+                    conn,(NpgsqlTransaction)transaction);
+                queryMigration.Parameters.AddWithValue("name",name);
+                var previous=(string?)await queryMigration.ExecuteScalarAsync();
+                if(previous is not null)
+                {
+                    if(!string.Equals(previous.Trim(),checksum,StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException(
+                            $"Previously applied migration {name} has changed. Never edit deployed migrations.");
+                    continue;
+                }
+                await using (var apply=new NpgsqlCommand(Encoding.UTF8.GetString(bytes),
+                    conn,(NpgsqlTransaction)transaction))
+                    await apply.ExecuteNonQueryAsync();
+                await using (var mark=new NpgsqlCommand("""
+                    INSERT INTO netforge_schema_migrations(filename,checksum)
+                    VALUES(@name,@checksum)
+                    """,conn,(NpgsqlTransaction)transaction))
+                {
+                    mark.Parameters.AddWithValue("name",name);
+                    mark.Parameters.AddWithValue("checksum",checksum);
+                    await mark.ExecuteNonQueryAsync();
+                }
+            }
+            await transaction.CommitAsync();
         }
 
         var username = (settings["NETFORGE_ADMIN_USER"] ?? "").Trim();
