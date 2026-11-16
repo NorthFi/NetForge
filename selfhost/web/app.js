@@ -2,7 +2,7 @@
 'use strict';
 const root=document.querySelector('#root'),identity=document.querySelector('#identity'),logout=document.querySelector('#logout');
 let csrf='',role='',username='',tab='Dashboard',data={};
-const views=['Dashboard','Customers','Services','Packages','Highsites','Sectors','Equipment','RADIUS NAS','RADIUS Sessions','RADIUS Usage','RADIUS Operations','Tickets','Billing','Bank Reconciliation','Financial Ledger','Billing Policy','Customer Portal','Staff'];
+const views=['Dashboard','Customers','Services','Packages','Highsites','Sectors','Equipment','RADIUS NAS','RADIUS Sessions','RADIUS Usage','RADIUS Operations','Tickets','Billing','Bank Reconciliation','Financial Ledger','Billing Policy','Invoice Automation','Notifications','Network Monitoring','Customer Portal','Staff'];
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
 const money=n=>new Intl.NumberFormat('en-ZA',{style:'currency',currency:'ZAR'}).format(Number(n)||0);
 async function api(path,method='GET',payload){
@@ -24,8 +24,9 @@ async function boot(skipAuth=false){
   if(!skipAuth){const session=await api('/status');csrf=session.csrf;role=session.role;username=session.username}
   identity.textContent=username+' · '+role;logout.hidden=false;
   root.innerHTML='<div class="shell"><nav id="nav"></nav><main id="content"></main></div>';
-  views.forEach(v=>{if((v==='Staff'||v==='Customer Portal'||v==='Bank Reconciliation'||v==='Financial Ledger')&&role!=='admin')return;if(v==='Billing'&&!['admin','dispatcher'].includes(role))return;
+  views.forEach(v=>{if((v==='Staff'||v==='Customer Portal'||v==='Bank Reconciliation'||v==='Financial Ledger'||v==='Invoice Automation'||v==='Notifications')&&role!=='admin')return;if(v==='Billing'&&!['admin','dispatcher'].includes(role))return;
    if(v==='Billing Policy'&&role!=='admin')return;
+   if(v==='Network Monitoring'&&!['admin','dispatcher'].includes(role))return;
    if(['RADIUS Usage','RADIUS Operations'].includes(v)&&!['admin','dispatcher'].includes(role))return;if(v==='RADIUS NAS'&&!['admin','dispatcher'].includes(role))return;
    let b=document.createElement('button');b.textContent=v;b.onclick=()=>{tab=v;render()};b.dataset.tab=v;root.querySelector('#nav').append(b)});
   await refresh();
@@ -60,6 +61,9 @@ function render(){
  else if(tab==='Bank Reconciliation')bankReconciliation(content);
  else if(tab==='Financial Ledger')financialLedger(content);
  else if(tab==='Billing Policy')billingPolicy(content);
+ else if(tab==='Invoice Automation')invoiceAutomation(content);
+ else if(tab==='Notifications')notificationConsole(content);
+ else if(tab==='Network Monitoring')networkMonitor(content);
  else if(tab==='Customer Portal')portalAccounts(content);
  else if(tab==='Staff')list(content,'staff','Staff accounts',['username','role','enabled','created_at']);
 }
@@ -189,6 +193,110 @@ function financialLedger(el){
  const journals=data.ledger||[],trial=data.trial||[];
  const debit=trial.reduce((n,x)=>n+Number(x.debit),0),credit=trial.reduce((n,x)=>n+Number(x.credit),0);
  el.innerHTML+='<h1>Financial journals and trial balance</h1><p class="sub">Immutable double-entry postings for issued invoices, cash receipts, reversals and credit notes. Historical entries are marked as opening postings.</p><div class="grid"><div class="card"><small>Total debits</small><div class="metric">'+esc(money(debit))+'</div></div><div class="card"><small>Total credits</small><div class="metric">'+esc(money(credit))+'</div></div><div class="card"><small>Journal balance</small><div class="metric">'+esc(money(debit-credit))+'</div></div></div><div class="card topgap"><h2>Account balances</h2><div class="tablewrap"><table><thead><tr><th>Account</th><th>Debits</th><th>Credits</th><th>Net</th></tr></thead><tbody>'+trial.map(x=>'<tr><td>'+esc(x.account_code)+'</td><td>'+esc(money(x.debit))+'</td><td>'+esc(money(x.credit))+'</td><td>'+esc(money(x.net))+'</td></tr>').join('')+'</tbody></table></div></div><div class="card topgap"><h2>Recent journal lines</h2><div class="tablewrap"><table><thead><tr><th>Date</th><th>Source</th><th>Description</th><th>Account</th><th>Debit</th><th>Credit</th></tr></thead><tbody>'+journals.map(j=>'<tr><td>'+esc(j.posted_at)+'</td><td>'+esc(j.source_type)+'</td><td>'+esc(j.memo)+'</td><td>'+esc(j.account_code)+'</td><td>'+esc(money(j.debit))+'</td><td>'+esc(money(j.credit))+'</td></tr>').join('')+'</tbody></table></div></div>';
+}
+
+
+function invoiceAutomation(el){
+ el.innerHTML+='<h1>Recurring invoice automation</h1><p class="sub">UTC month-based invoicing. Disabled by default, with a separate opt-in for automatic issuance. Pricing snapshots use active services only; tax and proration are not applied.</p><div class="card"><form id="schedule-form"><label><input id="schedule-enabled" type="checkbox" style="width:auto"> Enable scheduled invoice generation</label><label><input id="schedule-issue" type="checkbox" style="width:auto"> Automatically ISSUE generated invoices and post revenue to the ledger</label><div class="formgrid"><div><label>Run on or after UTC day of month (1–28)</label><input id="schedule-day" type="number" min="1" max="28" value="1" required></div><div><label>Invoice due days after month start (1–90)</label><input id="schedule-due" type="number" min="1" max="90" value="7" required></div></div><div class="buttons"><button class="primary">Save automation settings</button><button type="button" id="schedule-refresh">Refresh</button></div><p id="schedule-note" role="status"></p></form></div><div class="card topgap"><h2>Preview and run a billing month</h2><p class="note">The action below creates only unbilled customer/month records. Existing drafts are never automatically issued or overwritten. If automatic issuance is enabled, newly created drafts are issued and may enqueue opt-in email notifications.</p><div class="formgrid"><div><label>Billing period</label><input id="schedule-period" type="month" required></div></div><div class="buttons"><button id="schedule-preview" class="primary">Preview month</button><button id="schedule-run">Generate month now</button></div><p id="schedule-result" role="status"></p></div><div class="card topgap"><h2>Recent automation activity</h2><div id="schedule-history">Loading…</div></div>';
+ const enabled=el.querySelector('#schedule-enabled'),issue=el.querySelector('#schedule-issue'),day=el.querySelector('#schedule-day'),due=el.querySelector('#schedule-due'),note=el.querySelector('#schedule-note'),result=el.querySelector('#schedule-result'),month=el.querySelector('#schedule-period'),history=el.querySelector('#schedule-history');
+ month.value=new Date().toISOString().slice(0,7);
+ async function load(){
+  try{
+   const [settings,runs]=await Promise.all([api('/billing/schedule'),api('/billing/schedule/runs')]);
+   enabled.checked=settings.settings.enabled;issue.checked=settings.settings.auto_issue;
+   day.value=settings.settings.run_day;due.value=settings.settings.due_days;
+   history.innerHTML='<div class="tablewrap"><table><thead><tr><th>Period</th><th>Created</th><th>Issued</th><th>Actor</th><th>When</th></tr></thead><tbody>'+runs.map(r=>'<tr><td>'+esc(r.period)+'</td><td>'+esc(r.created_count)+'</td><td>'+esc(r.issued_count)+'</td><td>'+esc(r.actor)+'</td><td>'+esc(r.occurred_at)+'</td></tr>').join('')+'</tbody></table></div>';
+   note.textContent='Scheduled billing: '+(enabled.checked?'ENABLED':'disabled')+'. Last run: '+esc(settings.settings.last_run_at||'never');
+  }catch(e){note.textContent=e.message}
+ }
+ el.querySelector('#schedule-form').onsubmit=async e=>{e.preventDefault();
+  const settings={enabled:enabled.checked,autoIssue:issue.checked,runDay:Number(day.value),dueDays:Number(due.value)};
+  if(settings.enabled&&!confirm('Enable automatic monthly invoice creation? This can create real customer billing records when the worker runs.'))return;
+  if(settings.autoIssue&&!confirm('ISSUE new invoices automatically? This posts immutable financial journals and may enqueue customer emails.'))return;
+  try{const response=await api('/billing/schedule','PUT',settings);note.textContent=response.note;await load()}catch(err){note.textContent=err.message}
+ };
+ el.querySelector('#schedule-preview').onclick=async()=>{
+  try{const x=await api('/billing/schedule/preview?period='+encodeURIComponent(month.value));result.textContent='Eligible customer invoices: '+x.eligible.customers+'; estimated total '+money(x.eligible.total)+'. No changes made.'}
+  catch(e){result.textContent=e.message}
+ };
+ el.querySelector('#schedule-run').onclick=async()=>{
+  if(!enabled.checked){result.textContent='Enable and save the schedule before running it.';return}
+  if(!confirm('Generate monthly invoices for '+month.value+'? If automatic issuance is enabled, these invoices will be posted immediately.'))return;
+  try{const x=await api('/billing/schedule/run','POST',{period:month.value+'-01',confirm:true});result.textContent='Created: '+x.created+'; issued: '+x.issued+'. '+x.note;await load()}catch(e){result.textContent=e.message}
+ };
+ el.querySelector('#schedule-refresh').onclick=load;load();
+}
+function notificationConsole(el){
+ el.innerHTML+='<h1>Notification gateways</h1><p class="sub">SMTP STARTTLS and Telegram are configured through the host environment, not stored in browser-visible settings. Delivery is at least once; duplicates are possible after provider-acknowledged crashes.</p><div class="card"><h2>Delivery policies</h2><form id="notify-form"><p id="provider-readiness" class="note">Reading transport availability…</p><label><input id="notify-customer" type="checkbox" style="width:auto"> Send issued invoices by email to customers who explicitly opted in</label><label><input id="notify-email" type="checkbox" style="width:auto"> Send network DOWN/recovery alerts to the configured operations email</label><label><input id="notify-telegram" type="checkbox" style="width:auto"> Send network DOWN/recovery alerts to the configured Telegram chat</label><div class="buttons"><button class="primary">Save delivery settings</button><button type="button" id="notify-refresh">Refresh</button></div><p id="notify-result" role="status"></p></form></div><div class="card topgap"><h2>Message outbox</h2><p class="muted">Processing retries up to six times with backoff. Use Retry only for exhausted messages after confirming provider connectivity.</p><div id="outbox">Loading…</div></div><div class="card topgap"><h2>Customer invoice-email consent</h2><div class="formgrid"><div><label>Customer</label><select id="notify-account"><option value="">Choose customer</option>'+(data.customers||[]).map(c=>'<option value="'+esc(c.id)+'">'+esc(c.account)+' — '+esc(c.email)+'</option>').join('')+'</select></div></div><p id="notify-consent" class="muted"></p><div class="buttons"><button id="notify-opt-in">Enable consent</button><button id="notify-opt-out">Disable consent</button></div></div>';
+ const cust=el.querySelector('#notify-customer'),email=el.querySelector('#notify-email'),tg=el.querySelector('#notify-telegram'),output=el.querySelector('#notify-result'),outbox=el.querySelector('#outbox'),readiness=el.querySelector('#provider-readiness');
+ const account=el.querySelector('#notify-account'),consent=el.querySelector('#notify-consent');
+ account.onchange=()=>{const c=(data.customers||[]).find(x=>x.id===account.value);consent.textContent=c?'Current consent: '+(c.email_invoice_opt_in?'Enabled':'Disabled')+'. Email: '+(c.email||'not configured'):''};
+ for(const [id,flag] of [['#notify-opt-in',true],['#notify-opt-out',false]]){
+  el.querySelector(id).onclick=async()=>{
+   if(!account.value){consent.textContent='Choose a customer.';return}
+   if(flag&&!confirm('Confirm this customer has explicitly consented to invoice emails.'))return;
+   try{await api('/customers/'+account.value+'/invoice-notifications','PUT',{enabled:flag});const saved=(data.customers||[]).find(x=>x.id===account.value);if(saved)saved.email_invoice_opt_in=flag;account.dispatchEvent(new Event('change'))}
+   catch(err){consent.textContent=err.message}
+  };
+ }
+ async function load(){
+  try{
+   const [cfg,messages]=await Promise.all([api('/notifications/settings'),api('/notifications/outbox')]);
+   cust.checked=cfg.settings.customer_invoice_email;email.checked=cfg.settings.ops_email;tg.checked=cfg.settings.ops_telegram;
+   readiness.textContent='SMTP: '+(cfg.smtpReady?'configured':'not configured')+' · operations email: '+(cfg.operationsEmailReady?'configured':'not configured')+' · Telegram: '+(cfg.telegramReady?'configured':'not configured')+'. Configure credentials in selfhost/.env and restart the API.';
+   outbox.innerHTML='<div class="tablewrap"><table><thead><tr><th>Created</th><th>Channel</th><th>Recipient</th><th>Subject</th><th>Status</th><th>Attempts</th><th>Issue</th><th>Action</th></tr></thead><tbody>'+messages.map(m=>'<tr><td>'+esc(m.created_at)+'</td><td>'+esc(m.channel)+'</td><td>'+esc(m.recipient)+'</td><td>'+esc(m.subject)+'</td><td>'+esc(m.status)+'</td><td>'+esc(m.attempts)+'</td><td>'+esc(m.last_error)+'</td><td>'+(m.status==='dead'?'<button data-notification-retry="'+esc(m.id)+'">Retry</button>':'—')+'</td></tr>').join('')+'</tbody></table></div>';
+   outbox.querySelectorAll('[data-notification-retry]').forEach(btn=>btn.onclick=async()=>{
+    if(!confirm('Retry this exhausted notification? Delivery may already have succeeded before a crash.'))return;
+    try{await api('/notifications/outbox/'+btn.dataset.notificationRetry+'/retry','POST',{});await load()}
+    catch(e){output.textContent=e.message}
+   });
+  }catch(e){readiness.textContent=e.message}
+ }
+ el.querySelector('#notify-form').onsubmit=async e=>{e.preventDefault();
+  const settings={customerInvoiceEmail:cust.checked,opsEmail:email.checked,opsTelegram:tg.checked};
+  if(Object.values(settings).some(Boolean)&&!confirm('Enable selected outbound notifications? These may contact real customers or operational staff.'))return;
+  try{const r=await api('/notifications/settings','PUT',settings);output.textContent=r.note;await load()}
+  catch(e){output.textContent=e.message}
+ };
+ el.querySelector('#notify-refresh').onclick=load;load();
+}
+function networkMonitor(el){
+ el.innerHTML+='<h1>Network service monitoring</h1><p class="sub">TCP reachability checks against already inventoried NAS or equipment IPv4 addresses. This is not ICMP ping, SNMP polling or link-performance monitoring.</p><div class="card"><h2>Monitor a network service</h2><form id="monitor-form"><div class="formgrid"><div><label>Source type</label><select id="monitor-type"><option value="nas">RADIUS NAS</option><option value="equipment">Equipment</option></select></div><div><label>Source</label><select id="monitor-source" required></select></div><div><label>Monitor name</label><input id="monitor-name" maxlength="160" required></div><div><label>TCP port</label><input id="monitor-port" type="number" min="1" max="65535" value="8291" required></div><div><label>Check interval (60–3600 seconds)</label><input id="monitor-interval" type="number" min="60" max="3600" value="300" required></div><div><label>Failures before DOWN (2–10)</label><input id="monitor-threshold" type="number" min="2" max="10" value="2" required></div></div><label><input id="monitor-enabled" type="checkbox" style="width:auto"> Enable checking immediately</label><div class="buttons"><button class="primary">Add monitored service</button></div><p id="monitor-msg" role="status"></p></form></div><div class="card topgap"><div class="toolbar"><h2>Monitored targets</h2><button id="monitor-refresh">Refresh</button></div><div id="monitors">Loading…</div></div><div class="card topgap"><h2>Recent state transitions</h2><div id="monitor-events">Loading…</div></div>';
+ const type=el.querySelector('#monitor-type'),source=el.querySelector('#monitor-source'),msg=el.querySelector('#monitor-msg'),targets=el.querySelector('#monitors'),events=el.querySelector('#monitor-events');
+ const fillSource=()=>{
+  const rows=type.value==='nas'?data.nas:data.equipment;
+  source.innerHTML='<option value="">Choose '+esc(type.value)+'</option>'+(rows||[]).map(r=>'<option value="'+esc(r.id)+'">'+esc(r.name||r.shortname)+' ('+esc(r.nasname||r.management_ip||'no IP')+')</option>').join('');
+ };
+ type.onchange=fillSource;
+ async function draw(){
+  try{
+   const [all,history]=await Promise.all([api('/monitor/targets'),api('/monitor/events')]);
+   targets.innerHTML='<div class="tablewrap"><table><thead><tr><th>Name</th><th>Address</th><th>TCP</th><th>State</th><th>Failures</th><th>Latency</th><th>Checked</th><th>Action</th></tr></thead><tbody>'+all.map(t=>'<tr><td>'+esc(t.name)+'</td><td>'+esc(t.address)+'</td><td>'+esc(t.tcp_port)+'</td><td>'+esc(t.enabled?t.state:'Disabled')+'</td><td>'+esc(t.failure_streak)+'</td><td>'+esc(t.last_latency_ms??'—')+'</td><td>'+esc(t.last_checked_at||'—')+'</td><td>'+(role==='admin'?'<button data-check="'+esc(t.id)+'">Check</button> <button data-toggle="'+esc(t.id)+'">'+(t.enabled?'Disable':'Enable')+'</button>':'—')+'</td></tr>').join('')+'</tbody></table></div>';
+   targets.querySelectorAll('[data-check]').forEach(btn=>btn.onclick=async()=>{try{const r=await api('/monitor/targets/'+btn.dataset.check+'/check','POST',{});msg.textContent=r.note+' State: '+r.state;await draw()}catch(e){msg.textContent=e.message}});
+   targets.querySelectorAll('[data-toggle]').forEach(btn=>btn.onclick=async()=>{
+    const t=all.find(x=>x.id===btn.dataset.toggle),enabled=!t.enabled;
+    if(enabled&&!confirm('Enable TCP monitoring for '+t.name+'? The API container will open outbound TCP connections to '+t.address+':'+t.tcp_port+'.'))return;
+    try{await api('/monitor/targets/'+t.id,'PUT',{enabled,intervalSeconds:t.interval_seconds,failureThreshold:t.failure_threshold,confirm:true});await draw()}
+    catch(e){msg.textContent=e.message}
+   });
+   events.innerHTML='<div class="tablewrap"><table><thead><tr><th>When</th><th>Target</th><th>Event</th><th>Detail</th></tr></thead><tbody>'+history.map(e=>'<tr><td>'+esc(e.occurred_at)+'</td><td>'+esc(e.name)+'</td><td>'+esc(e.transition)+'</td><td>'+esc(e.detail)+'</td></tr>').join('')+'</tbody></table></div>';
+  }catch(e){targets.textContent=e.message}
+ }
+ el.querySelector('#monitor-form').onsubmit=async e=>{e.preventDefault();const enabled=el.querySelector('#monitor-enabled').checked,sourceId=source.value;
+  if(!sourceId){msg.textContent='Choose an inventoried network device.';return}
+  if(enabled&&!confirm('Enable periodic TCP checks against this selected infrastructure device?'))return;
+  const payload={name:el.querySelector('#monitor-name').value,tcpPort:Number(el.querySelector('#monitor-port').value),intervalSeconds:Number(el.querySelector('#monitor-interval').value),failureThreshold:Number(el.querySelector('#monitor-threshold').value),enabled,confirm:enabled,nasId:type.value==='nas'?Number(sourceId):null,equipmentId:type.value==='equipment'?sourceId:null};
+  try{await api('/monitor/targets','POST',payload);msg.textContent='Monitor created.';await draw()}catch(err){msg.textContent=err.message}
+ };
+ el.querySelector('#monitor-refresh').onclick=draw;
+ (async()=>{try{
+  if(role==='admin'){
+   const [nas,equipment]=await Promise.all([api('/radius/nas-management'),api('/equipment')]);data.nas=nas;data.equipment=equipment;fillSource();
+  }else{
+   el.querySelector('#monitor-form').closest('.card').hidden=true;
+  }
+  await draw();
+ }catch(e){msg.textContent=e.message}})();
 }
 
 function numberGb(bytes){return ((Number(bytes)||0)/1073741824).toFixed(2)+' GB'}
