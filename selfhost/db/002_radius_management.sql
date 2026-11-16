@@ -30,14 +30,14 @@ CREATE INDEX IF NOT EXISTS idx_radacct_user_started ON radacct(username,acctstar
 ALTER TABLE services ADD COLUMN IF NOT EXISTS suspension_reason varchar(24);
 ALTER TABLE services ADD COLUMN IF NOT EXISTS suspended_at timestamptz;
 ALTER TABLE services ADD COLUMN IF NOT EXISTS resumed_at timestamptz;
-DO $
+DO $mig$
 BEGIN
   IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='services_suspension_reason_valid') THEN
     ALTER TABLE services ADD CONSTRAINT services_suspension_reason_valid
       CHECK (suspension_reason IS NULL OR suspension_reason IN ('manual','overdue'));
   END IF;
 END
-$;
+$mig$;
 -- This idempotent guard also works when a fresh database runs 001 and 002 together.
 -- Install guard for pre-existing tables separately if prior attempts created it.
 CREATE TABLE IF NOT EXISTS billing_controls (
