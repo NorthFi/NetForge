@@ -87,7 +87,7 @@ public static class ServiceLifecycle
             "SELECT username,state FROM services WHERE id=@id FOR UPDATE",
             Store.P("id",serviceId));
         if(service.Count==0)return "notfound";
-        if((string)service[0]["state"]!="cancelled")return "Cancelled services cannot be suspended";
+        if((service[0]["state"] as string)=="cancelled")return "Cancelled services cannot be suspended";
         var username=(string)service[0]["username"]!;
         await Reject(conn,(NpgsqlTransaction)tx,username);
         await NetworkManagement.Execute(conn,(NpgsqlTransaction)tx,"""
@@ -111,8 +111,8 @@ public static class ServiceLifecycle
             """,Store.P("id",serviceId));
         if(rows.Count==0)return "notfound";
         var s=rows[0];
-        if((string)s["customer_status"]!="active")return "Customer must be active";
-        if((string)s["state"]!="suspended")return "Only suspended services can be reactivated";
+        if((s["customer_status"] as string)!="active")return "Customer must be active";
+        if((s["state"] as string)!="suspended")return "Only suspended services can be reactivated";
         var username=(string)s["username"]!;
         var credential=await NetworkManagement.Query(conn,(NpgsqlTransaction)tx,"""
             SELECT id FROM radcheck WHERE username=@u AND attribute='Cleartext-Password'
