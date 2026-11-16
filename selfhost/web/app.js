@@ -161,11 +161,12 @@ function bankReconciliation(el){
   if(!row)return;
   const invoices=outstandingInvoices();
   if(!invoices.length){status.textContent='No issued invoices with an outstanding balance.';return}
+  const allocationRequestId=crypto.randomUUID();
   const d=dialog('<h2>Allocate bank receipt</h2><p class="muted">'+esc(row.bank_name)+' · '+esc(row.transaction_id)+' · available '+esc(money(row.available))+'</p><form id="allocate-form"><label>Invoice</label><select name="invoiceId" required>'+invoices.map(i=>'<option value="'+esc(i.id)+'">'+esc(i.number)+' / '+esc(i.account)+' / outstanding '+esc(money(i.outstanding))+'</option>').join('')+'</select><label>Allocation amount</label><input type="number" step="0.01" min="0.01" max="'+esc(row.available)+'" value="'+esc(row.available)+'" name="amount" required><p id="alloc-error" class="error"></p><div class="buttons"><button class="primary">Allocate payment</button><button type="button" id="cancel">Cancel</button></div></form>');
   d.querySelector('#cancel').onclick=()=>d.close();
   d.querySelector('#allocate-form').onsubmit=async e=>{e.preventDefault();const values=Object.fromEntries(new FormData(e.target));
    if(!confirm('Allocate '+money(values.amount)+' from bank line '+row.transaction_id+' to the selected invoice?'))return;
-   try{const result=await api('/billing/bank-lines/'+row.id+'/allocate','POST',{invoiceId:values.invoiceId,amount:Number(values.amount),requestId:crypto.randomUUID()});d.close();await refresh();notice('Payment posted; invoice remaining '+money(result.remaining));}
+   try{const result=await api('/billing/bank-lines/'+row.id+'/allocate','POST',{invoiceId:values.invoiceId,amount:Number(values.amount),requestId:allocationRequestId});d.close();await refresh();notice('Payment posted; invoice remaining '+money(result.remaining));}
    catch(err){d.querySelector('#alloc-error').textContent=err.message}
   };
  });
@@ -412,10 +413,11 @@ function details(collection,r){
   btn('Issue credit note',()=>{d.close();creditNote(r)});
 }
 function payment(invoice){
+ const submissionId=crypto.randomUUID();
  const d=dialog('<h2>Record payment · '+esc(invoice.number)+'</h2><form id="pay"><label>Amount (ZAR)</label><input name="amount" type="number" min="0.01" step="0.01" required><label>Reference</label><input name="reference" required><p id="err" class="error"></p><button class="primary">Save payment</button><button type="button" id="cancel">Cancel</button></form>');
  d.querySelector('#cancel').onclick=()=>d.close();
  d.querySelector('#pay').onsubmit=async e=>{e.preventDefault();const raw=Object.fromEntries(new FormData(e.target));
-  try{await api('/payments','POST',{invoiceId:invoice.id,amount:Number(raw.amount),reference:raw.reference,requestId:crypto.randomUUID()});d.close();await refresh()}catch(err){d.querySelector('#err').textContent=err.message}};
+  try{await api('/payments','POST',{invoiceId:invoice.id,amount:Number(raw.amount),reference:raw.reference,requestId:submissionId});d.close();await refresh()}catch(err){d.querySelector('#err').textContent=err.message}};
 }
 logout.onclick=async()=>{try{await api('/logout','POST');csrf='';await boot()}catch(err){notice(err.message,true)}};
 boot();
