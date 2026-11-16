@@ -228,7 +228,49 @@ try {
         audit('billing_generate','invoices',$period);
         respond($result,201);
     }
-    $allowed=['customers','highsites','sectors','equipment','backhauls','scripts','jobs','tickets','branches','technicians','packages','staff','outages','maintenance','inventory','leads','changes','ipam','activities','services','invoices','payments','surveys','workorders','link_checks','ticket_worklogs','todos','usage_records'];
+    if ($action==='portal_accounts') {
+        // Portal logins are provisioned by administrators and never share staff sessions.
+        if (($_SESSION['role']??'')!=='admin') respond(['error'=>'Administrator required'],403);
+        if ($method==='GET') respond(locked('portal_auth',fn($rows)=>array_map(fn($r)=>[
+            'customer_id'=>$r['customer_id'],'username'=>$r['username'],
+            'enabled'=>(bool)($r['enabled']??false),'updated_at'=>$r['updated_at']??''
+        ],$rows)));
+        if ($method!=='POST') respond(['error'=>'Method not allowed'],405);
+        csrf();$b=body();$id=(string)($b['customer_id']??'');
+        $op=(string)($b['operation']??'');$username=trim((string)($b['username']??''));
+        $password=(string)($b['password']??'');
+        if(!preg_match('/^[a-f0-9]{32}$/',$id)||!in_array($op,['create','reset','enable','disable'],true))
+            respond(['error'=>'Invalid customer or operation'],422);
+        $customer=locked('customers',fn($rows)=>array_values(array_filter($rows,fn($r)=>($r['id']??'')===$id)));
+        if(count($customer)!==1)respond(['error'=>'Customer not found'],404);
+        if($op==='create'&&(!preg_match('/^[a-zA-Z0-9_.@-]{3,64}$/',$username)||strlen($password)<14))
+            respond(['error'=>'Username 3–64 characters and password at least 14 required'],422);
+        if($op==='reset'&&strlen($password)<14)respond(['error'=>'Password must have at least 14 characters'],422);
+        $result=locked('portal_auth',function($rows,$path)use($id,$op,$username,$password){
+            $index=null;$now=gmdate('c');
+            foreach($rows as $k=>$r)if(($r['customer_id']??'')===$id){$index=$k;break;}
+            if($op==='create'){
+                if($index!==null)respond(['error'=>'Portal login already exists'],409);
+                foreach($rows as $r)if(strcasecmp((string)($r['username']??''),$username)===0)
+                    respond(['error'=>'Portal username exists'],409);
+                $record=['customer_id'=>$id,'username'=>$username,'hash'=>password_hash($password,PASSWORD_DEFAULT),
+                    'enabled'=>true,'created_at'=>$now,'updated_at'=>$now];
+                $rows[]=$record;
+            }else{
+                if($index===null)respond(['error'=>'Portal login not found'],404);
+                if($op==='reset')$rows[$index]['hash']=password_hash($password,PASSWORD_DEFAULT);
+                if($op==='enable')$rows[$index]['enabled']=true;
+                if($op==='disable')$rows[$index]['enabled']=false;
+                $rows[$index]['updated_at']=$now;$record=$rows[$index];
+            }
+            savejson($path,$rows);
+            return ['customer_id'=>$record['customer_id'],'username'=>$record['username'],
+                'enabled'=>(bool)$record['enabled'],'updated_at'=>$record['updated_at']];
+        });
+        audit('portal_'.$op,'customers',$id);
+        respond($result);
+    }
+    $allowed=['customers','highsites','sectors','equipment','backhauls','scripts','jobs','tickets','branches','technicians','packages','staff','outages','maintenance','inventory','leads','changes','ipam','activities','services','invoices','payments','surveys','workorders','link_checks','ticket_worklogs','todos','usage_records','ticket_messages'];
     $category=(string)($_GET['category']??'');
     if (!in_array($category,$allowed,true)) respond(['error'=>'Unknown category'],404);
     if ($category==='staff' && ($_SESSION['role']??'')!=='admin') respond(['error'=>'Admin only'],403);
@@ -266,6 +308,7 @@ try {
           'workorders'=>['name','ticket_id','customer_id','highsite_id','technician_id','branch_id','scheduled_date','status','checklist','materials','completion_notes'],
           'link_checks'=>['name','customer_id','sector_id','rssi_dbm','snr_db','ccq','tx_mbps','rx_mbps','captured_at','notes'],
           'ticket_worklogs'=>['name','ticket_id','technician_id','minutes','work_date','description','performed_by'],
+          'ticket_messages'=>['name','ticket_id','visibility','body','author','created_at'],
           'todos'=>['name','customer_id','ticket_id','due_date','assigned_to','status','description'],
           'usage_records'=>['name','service_id','customer_id','period','download_gb','upload_gb','cap_gb','source','notes'],
         ];
@@ -384,6 +427,19 @@ try {
             respond(['error'=>'Azimuth must be in the range 0 to less than 360 degrees'],422);
         }
 
+        if($category==='ticket_messages'){
+            if($method==='PUT')respond(['error'=>'Ticket messages cannot be edited'],405);
+            $tid=$item['ticket_id']??'';
+            $ticket=locked('tickets',fn($rows)=>array_values(array_filter($rows,fn($r)=>($r['id']??'')===$tid)));
+            if(count($ticket)!==1)respond(['error'=>'Ticket not found'],404);
+            if(!in_array($item['visibility']??'',['public','internal'],true))
+                respond(['error'=>'Visibility must be public or internal'],422);
+            if(strlen(trim((string)($item['body']??'')))<1||strlen($item['body'])>4000)
+                respond(['error'=>'Message body is required (1–4000 bytes)'],422);
+            $item['name']=substr($item['body'],0,100);
+            $item['author']=$_SESSION['username'];
+            $item['created_at']=gmdate('c');
+        }
         if($category==='ticket_worklogs'){
             $id=$item['ticket_id']??'';
             $tickets=locked('tickets',fn($r)=>$r);
@@ -458,6 +514,7 @@ try {
         respond($item,201);
     }
     if ($method==='DELETE') {
+        if ($category==='ticket_messages')respond(['error'=>'Ticket correspondence is immutable'],405);
         if (($_SESSION['role']??'')!=='admin') respond(['error'=>'Admin only'],403);
         $id=(string)($_GET['id']??'');if (!preg_match('/^[a-f0-9]{32}$/',$id)) respond(['error'=>'Invalid ID'],422);
         if ($category==='jobs') respond(['error'=>'Job execution is disabled'],403);
@@ -473,7 +530,7 @@ try {
           'invoices'=>[['payments','invoice_id']],
                     'leads'=>[['surveys','lead_id']],
           'services'=>[['usage_records','service_id'],['invoices','source_service_id']],
-          'tickets'=>[['activities','ticket_id'],['workorders','ticket_id'],['ticket_worklogs','ticket_id'],['todos','ticket_id']],
+          'tickets'=>[['activities','ticket_id'],['workorders','ticket_id'],['ticket_worklogs','ticket_id'],['todos','ticket_id'],['ticket_messages','ticket_id']],
 
         ];
         foreach(($references[$category]??[]) as [$collection,$field]){
