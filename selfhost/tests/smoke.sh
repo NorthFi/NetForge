@@ -4,12 +4,19 @@ set -Eeuo pipefail
 BASE="$(mktemp -d)"
 PID=""
 MOCK_PID=""
-trap 'if [ -n "$MOCK_PID" ]; then kill "$MOCK_PID" 2>/dev/null || true; fi; if [ -n "$PID" ]; then kill "$PID" 2>/dev/null || true; fi; cat "$BASE/server.log" 2>/dev/null | tail -35 || true; rm -rf "$BASE"' EXIT
+MONITOR_PID=""
+trap 'if [ -n "$MONITOR_PID" ]; then kill "$MONITOR_PID" 2>/dev/null || true; fi; if [ -n "$MOCK_PID" ]; then kill "$MOCK_PID" 2>/dev/null || true; fi; if [ -n "$PID" ]; then kill "$PID" 2>/dev/null || true; fi; cat "$BASE/server.log" 2>/dev/null | tail -35 || true; rm -rf "$BASE"' EXIT
 export ASPNETCORE_URLS="http://127.0.0.1:18990"
 export Database__ConnectionString="Host=127.0.0.1;Port=55432;Database=netforge_ci;Username=netforge_ci;Password=netforge_test_very_strong_secret"
 export NETFORGE_ADMIN_USER="ciadmin"
 export NETFORGE_ADMIN_PASSWORD="ci_admin_long_unique_password"
 export NETFORGE_KEY_DIRECTORY="$BASE/keys"
+# Deliberately unreachable test SMTP: confirms opt-in queuing and safe retries
+# without delivering messages to real accounts.
+export NETFORGE_SMTP_HOST="127.0.0.1"
+export NETFORGE_SMTP_PORT="12587"
+export NETFORGE_SMTP_FROM="notifications@example.test"
+export NETFORGE_OPERATIONS_EMAIL="noc@example.test"
 
 dotnet run --project selfhost/src/NetForge.Api/NetForge.Api.csproj -c Release --no-build >"$BASE/server.log" 2>&1 &
 PID="$!"
@@ -372,5 +379,126 @@ if docker exec "$PGCONTAINER" psql -U netforge_ci -d netforge_ci -v ON_ERROR_STO
   -c "UPDATE ledger_lines SET debit=1 WHERE line_no=1" >/dev/null 2>&1; then
   echo "Immutable journal was edited"; exit 1
 fi
+
+
+# ------------------------------------------------------------------------
+# Phase 5: opt-in billing schedule and queued notification integration.
+# ------------------------------------------------------------------------
+api GET /billing/schedule "" 200
+grep -q '"enabled":false' "$BASE/result.json"
+api GET /notifications/settings "" 200
+grep -q '"customer_invoice_email":false' "$BASE/result.json"
+api GET /notifications/outbox "" 200
+test "$(cat "$BASE/result.json")" = '[]'
+api POST /billing/schedule/run '{"period":"2027-01-01","confirm":true}' 200
+grep -q '"enabled":false' "$BASE/result.json"
+
+api GET '/billing/schedule/preview?period=2027-01' "" 200
+grep -q '"period":"2027-01"' "$BASE/result.json"
+api PUT /billing/schedule '{"enabled":true,"autoIssue":false,"runDay":1,"dueDays":7}' 200
+api POST /billing/schedule/run '{"period":"2027-01-01","confirm":true}' 200
+python3 - "$BASE/result.json" <<'PY'
+import json,sys
+r=json.load(open(sys.argv[1]))
+assert r["created"]>=1 and r["issued"]==0,r
+PY
+api GET /invoices "" 200
+AUTO_DRAFT="$(python3 - "$BASE/result.json" "$CUSTOMER" <<'PY'
+import json,sys
+rows=json.load(open(sys.argv[1]))
+print(next(x['id'] for x in rows if x['customer_id']==sys.argv[2] and x['period']=='2027-01-01'))
+PY
+)"
+api GET "/billing/invoices/$AUTO_DRAFT/items" "" 200
+grep -q '"service_id"' "$BASE/result.json" && {
+  echo "Internal service identifiers should not be exposed from invoice line items" >&2;exit 1;
+} || true
+python3 - "$BASE/result.json" <<'PY'
+import json,sys
+items=json.load(open(sys.argv[1]))
+assert len(items)>=1,items
+assert sum(float(x['amount']) for x in items)>0,items
+PY
+api POST /billing/schedule/run '{"period":"2027-01-01","confirm":true}' 200
+grep -q '"created":0' "$BASE/result.json"
+
+api PUT "/customers/$CUSTOMER/invoice-notifications" '{"enabled":true}' 200
+api PUT /notifications/settings '{"customerInvoiceEmail":true,"opsEmail":true,"opsTelegram":false}' 200
+api PUT /billing/schedule '{"enabled":true,"autoIssue":true,"runDay":1,"dueDays":7}' 200
+api POST /billing/schedule/run '{"period":"2027-02-01","confirm":true}' 200
+python3 - "$BASE/result.json" <<'PY'
+import json,sys
+r=json.load(open(sys.argv[1]))
+assert r["issued"]>=1 and r["created"]==r["issued"],r
+PY
+api GET /invoices "" 200
+AUTO_ISSUED="$(python3 - "$BASE/result.json" "$CUSTOMER" <<'PY'
+import json,sys
+rows=json.load(open(sys.argv[1]))
+r=next(x for x in rows if x['customer_id']==sys.argv[2] and x['period']=='2027-02-01')
+assert r['status']=='issued',r
+print(r['id'])
+PY
+)"
+api GET /notifications/outbox "" 200
+python3 - "$BASE/result.json" "$AUTO_ISSUED" <<'PY'
+import json,sys
+messages=json.load(open(sys.argv[1]))
+assert any(x["channel"]=="email" and x["recipient"]=="ci@example.test" and "invoice" in x["subject"].lower() for x in messages),messages
+PY
+api POST /billing/schedule/run '{"period":"2027-02-01","confirm":true}' 200
+grep -q '"created":0' "$BASE/result.json"
+api GET /notifications/outbox "" 200
+python3 - "$BASE/result.json" <<'PY'
+import json,sys
+messages=json.load(open(sys.argv[1]))
+assert len([x for x in messages if x["channel"]=="email" and "invoice" in x["subject"].lower()])==1,messages
+PY
+api GET /billing/schedule/runs "" 200
+grep -q '2027-02-01' "$BASE/result.json"
+api PUT /billing/schedule '{"enabled":false,"autoIssue":false,"runDay":1,"dueDays":7}' 200
+
+# ------------------------------------------------------------------------
+# Phase 5: only saved NAS or equipment can be probed; 2 failures -> DOWN;
+# a successful TCP connection -> recovery; alerts are queued if enabled.
+# ------------------------------------------------------------------------
+api POST /monitor/targets '{"nasId":999999999,"equipmentId":null,"name":"Invalid NAS probe","tcpPort":19092,"enabled":true,"intervalSeconds":300,"failureThreshold":2,"confirm":true}' 409
+api POST /monitor/targets "{\"nasId\":$LOOP_NAS,\"equipmentId\":null,\"name\":\"CI test NAS TCP\",\"tcpPort\":19092,\"enabled\":true,\"intervalSeconds\":300,\"failureThreshold\":2,\"confirm\":true}" 201
+MONITOR_ID="$(id)"
+api POST "/monitor/targets/$MONITOR_ID/check" '{}' 200
+api POST "/monitor/targets/$MONITOR_ID/check" '{}' 200
+api GET /monitor/targets "" 200
+python3 - "$BASE/result.json" "$MONITOR_ID" <<'PY'
+import json,sys
+row=next(x for x in json.load(open(sys.argv[1])) if x['id']==sys.argv[2])
+assert row['state']=='down',row
+assert row['failure_streak']>=2,row
+PY
+api GET /monitor/events "" 200
+grep -q '"transition":"down"' "$BASE/result.json"
+api GET /notifications/outbox "" 200
+python3 - "$BASE/result.json" <<'PY'
+import json,sys
+messages=json.load(open(sys.argv[1]))
+assert any(x['subject']=='NetForge network alert' and x['recipient']=='noc@example.test' for x in messages),messages
+PY
+
+python3 -m http.server 19092 --bind 127.0.0.1 > "$BASE/monitor-http.log" 2>&1 &
+MONITOR_PID="$!"
+sleep 0.3
+api POST "/monitor/targets/$MONITOR_ID/check" '{}' 200
+grep -q '"transition":"recovered"' "$BASE/result.json"
+api GET /monitor/events "" 200
+grep -q '"transition":"recovered"' "$BASE/result.json"
+kill "$MONITOR_PID" 2>/dev/null || true
+MONITOR_PID=""
+api PUT "/monitor/targets/$MONITOR_ID" '{"enabled":false,"intervalSeconds":300,"failureThreshold":2,"confirm":false}' 200
+api GET /monitor/targets "" 200
+python3 - "$BASE/result.json" "$MONITOR_ID" <<'PY'
+import json,sys
+row=next(x for x in json.load(open(sys.argv[1])) if x['id']==sys.argv[2])
+assert row['enabled'] is False,row
+PY
+api PUT /notifications/settings '{"customerInvoiceEmail":false,"opsEmail":false,"opsTelegram":false}' 200
 
 echo "NetForge .NET 11 / PostgreSQL API smoke passed."
