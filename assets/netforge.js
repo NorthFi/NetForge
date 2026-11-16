@@ -496,6 +496,35 @@ function customer360(id){
  draw();
 }
 
+
+async function portalAccounts(){
+ const el=document.querySelector('#content');
+ el.insertAdjacentHTML('beforeend','<div class="nf-kicker">Subscriber self-service</div><h2>Customer portal access</h2><p class="muted">Create customer logins, reset passwords and revoke access. No login credentials are emailed automatically.</p><div class="card"><form id="portal-enroll"><h3>Enroll customer</h3><div class="formgrid"><div><label>Customer account</label><select id="portal-customer" name="customer_id" required><option value="">Select a customer</option>'+all('customers').map(c=>'<option value="'+esc(c.id)+'">'+esc(c.account||c.name)+'</option>').join('')+'</select></div><div><label>Portal login username</label><input id="portal-username" name="username" minlength="3" maxlength="64" required></div><div><label>Initial password (14+ characters)</label><input name="password" type="password" minlength="14" required autocomplete="new-password"></div></div><p id="portal-feedback" role="status"></p><button class="primary">Create login</button></form><p class="nf-detail-subtitle">Customer-facing URL: <a href="portal/" rel="noopener noreferrer" target="_blank">Open subscriber portal</a>. Give each customer their password through a verified private channel.</p></div><div class="section"><div class="toolbar"><h3>Provisioned accounts</h3><button id="portal-refresh">Refresh list</button></div><div id="portal-accounts-list">Loading…</div></div>');
+ const select=el.querySelector('#portal-customer'),username=el.querySelector('#portal-username'),feedback=el.querySelector('#portal-feedback'),list=el.querySelector('#portal-accounts-list'),form=el.querySelector('#portal-enroll');
+ select.onchange=()=>{const customer=all('customers').find(c=>c.id===select.value);username.value=customer?.account||''};
+ async function draw(){
+  try{
+   const users=await call({action:'portal_accounts'});
+   list.innerHTML='<div class="card tablewrap"><table><thead><tr><th>Customer</th><th>Username</th><th>Access</th><th>Actions</th></tr></thead><tbody>'+users.map(u=>'<tr><td>'+esc(lookup('customers',u.customer_id))+'</td><td>'+esc(u.username)+'</td><td><span class="nf-status '+(u.enabled?'nf-good':'nf-warn')+'">'+(u.enabled?'Enabled':'Disabled')+'</span></td><td><div class="tools"><button data-action="reset" data-id="'+esc(u.customer_id)+'">Reset password</button><button data-action="'+(u.enabled?'disable':'enable')+'" data-id="'+esc(u.customer_id)+'">'+(u.enabled?'Disable':'Enable')+'</button></div></td></tr>').join('')+'</tbody></table>'+(users.length?'':'<p class="nf-empty" style="padding:15px">No portal logins provisioned.</p>')+'</div>';
+   list.querySelectorAll('[data-action]').forEach(btn=>btn.onclick=async()=>{
+    const operation=btn.dataset.action,customer_id=btn.dataset.id,body={operation,customer_id};
+    if(operation==='reset'){
+      const pwd=prompt('Enter a new password (14+ characters) for '+lookup('customers',customer_id)+'. Share privately.');
+      if(pwd===null)return;
+      if(pwd.length<14){feedback.textContent='Password must contain at least 14 characters.';return}
+      body.password=pwd;
+    }else if(!confirm((operation==='disable'?'Disable':'Enable')+' customer portal access?'))return;
+    try{await call({action:'portal_accounts'},'POST',body);feedback.textContent='Portal access updated.';await draw()}
+    catch(e){feedback.textContent=e.message}
+   });
+  }catch(e){list.textContent=e.message}
+ }
+ form.onsubmit=async e=>{e.preventDefault();const body=Object.fromEntries(new FormData(form));body.operation='create';
+  try{await call({action:'portal_accounts'},'POST',body);form.reset();feedback.textContent='Created. Share credentials with the subscriber privately.';await draw()}
+  catch(err){feedback.textContent=err.message}
+ };
+ el.querySelector('#portal-refresh').onclick=draw;draw();
+}
 function ticket360(id){
  const r=all('tickets').find(x=>x.id===id);if(!r)return;
  const customer=all('customers').find(x=>x.id===r.customer_id);
