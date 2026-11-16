@@ -266,7 +266,7 @@ public static class Endpoints
                 """,Store.P("id",id));
             if(rows.Count==0)return Results.NotFound();
             var service=rows[0];
-            if((string)Value(service,"customer_status")!=="active")
+            if((string)Value(service,"customer_status")!="active")
                 return Invalid("Customer must be active before provisioning RADIUS");
             if((string)Value(service,"state")=="cancelled")
                 return Invalid("Cancelled services cannot be reactivated");
