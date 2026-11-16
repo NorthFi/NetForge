@@ -254,13 +254,13 @@ try {
                 foreach($rows as $r)if(strcasecmp((string)($r['username']??''),$username)===0)
                     respond(['error'=>'Portal username exists'],409);
                 $record=['customer_id'=>$id,'username'=>$username,'hash'=>password_hash($password,PASSWORD_DEFAULT),
-                    'enabled'=>true,'created_at'=>$now,'updated_at'=>$now];
+                    'enabled'=>true,'password_version'=>1,'created_at'=>$now,'updated_at'=>$now];
                 $rows[]=$record;
             }else{
                 if($index===null)respond(['error'=>'Portal login not found'],404);
-                if($op==='reset')$rows[$index]['hash']=password_hash($password,PASSWORD_DEFAULT);
+                if($op==='reset'){$rows[$index]['hash']=password_hash($password,PASSWORD_DEFAULT);$rows[$index]['password_version']=(int)($rows[$index]['password_version']??1)+1;}
                 if($op==='enable')$rows[$index]['enabled']=true;
-                if($op==='disable')$rows[$index]['enabled']=false;
+                if($op==='disable'){$rows[$index]['enabled']=false;$rows[$index]['password_version']=(int)($rows[$index]['password_version']??1)+1;}
                 $rows[$index]['updated_at']=$now;$record=$rows[$index];
             }
             savejson($path,$rows);
@@ -523,7 +523,7 @@ try {
         $references=[
           'highsites'=>[['sectors','highsite_id'],['customers','highsite_id'],['equipment','highsite_id'],['backhauls','highsite_id'],['backhauls','remote_highsite_id'],['tickets','highsite_id'],['services','highsite_id'],['surveys','highsite_id'],['workorders','highsite_id'],['outages','highsite_id'],['maintenance','highsite_id'],['changes','highsite_id'],['ipam','highsite_id']],
           'sectors'=>[['customers','sector_id'],['services','sector_id'],['link_checks','sector_id']],
-          'customers'=>[['customers','parent_customer_id'],['todos','customer_id'],['usage_records','customer_id'],['tickets','customer_id'],['equipment','customer_id'],['activities','customer_id'],['services','customer_id'],['invoices','customer_id'],['payments','customer_id'],['surveys','customer_id'],['workorders','customer_id'],['link_checks','customer_id'],['ipam','customer_id']],
+          'customers'=>[['portal_auth','customer_id'],['customers','parent_customer_id'],['todos','customer_id'],['usage_records','customer_id'],['tickets','customer_id'],['equipment','customer_id'],['activities','customer_id'],['services','customer_id'],['invoices','customer_id'],['payments','customer_id'],['surveys','customer_id'],['workorders','customer_id'],['link_checks','customer_id'],['ipam','customer_id']],
           'branches'=>[['customers','branch_id'],['highsites','branch_id'],['technicians','branch_id'],['tickets','branch_id'],['surveys','branch_id'],['invoices','branch_id'],['workorders','branch_id'],['inventory','branch_id'],['leads','branch_id'],['ipam','branch_id'],['outages','branch_id'],['changes','branch_id'],['maintenance','branch_id']],
           'technicians'=>[['tickets','technician_id'],['workorders','technician_id'],['maintenance','technician_id'],['changes','technician_id']],
           'equipment'=>[['maintenance','equipment_id']],
