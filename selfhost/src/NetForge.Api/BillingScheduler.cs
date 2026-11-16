@@ -128,7 +128,7 @@ public static class BillingScheduler
             return new BillingScheduleResult(false,0,0,
                 "Automated billing is disabled; no records changed");
         var issue=config["auto_issue"] is true;
-        var due=(int)config["due_days"]!;
+        var due=Convert.ToInt32(config["due_days"],CultureInfo.InvariantCulture);
 
         // All invoice and item calculations use one MATERIALIZED subscription
         // snapshot, preventing a package change between the invoice subtotal and
@@ -213,7 +213,7 @@ public sealed class MonthlyBillingWorker(NpgsqlDataSource db,
                 var settings=await Store.Rows(db,
                     "SELECT enabled,run_day FROM billing_schedule WHERE id=1");
                 if(settings.Single()["enabled"] is true &&
-                    now.Day >= (int)settings.Single()["run_day"]!)
+                    now.Day >= Convert.ToInt32(settings.Single()["run_day"],CultureInfo.InvariantCulture))
                 {
                     var month=new DateOnly(now.Year,now.Month,1);
                     var result=await BillingScheduler.Run(db,month,"billing-worker",token);
