@@ -2,7 +2,7 @@
 'use strict';
 const root=document.querySelector('#root'),identity=document.querySelector('#identity'),logout=document.querySelector('#logout');
 let csrf='',role='',username='',tab='Dashboard',data={};
-const views=['Dashboard','Customers','Services','Packages','Highsites','Sectors','Equipment','RADIUS NAS','RADIUS Sessions','RADIUS Usage','RADIUS Operations','Tickets','Billing','Billing Policy','Staff'];
+const views=['Dashboard','Customers','Services','Packages','Highsites','Sectors','Equipment','RADIUS NAS','RADIUS Sessions','RADIUS Usage','RADIUS Operations','Tickets','Billing','Billing Policy','Customer Portal','Staff'];
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
 const money=n=>new Intl.NumberFormat('en-ZA',{style:'currency',currency:'ZAR'}).format(Number(n)||0);
 async function api(path,method='GET',payload){
@@ -24,7 +24,7 @@ async function boot(skipAuth=false){
   if(!skipAuth){const session=await api('/status');csrf=session.csrf;role=session.role;username=session.username}
   identity.textContent=username+' · '+role;logout.hidden=false;
   root.innerHTML='<div class="shell"><nav id="nav"></nav><main id="content"></main></div>';
-  views.forEach(v=>{if(v==='Staff'&&role!=='admin')return;if(v==='Billing'&&!['admin','dispatcher'].includes(role))return;
+  views.forEach(v=>{if((v==='Staff'||v==='Customer Portal')&&role!=='admin')return;if(v==='Billing'&&!['admin','dispatcher'].includes(role))return;
    if(v==='Billing Policy'&&role!=='admin')return;
    if(['RADIUS Usage','RADIUS Operations'].includes(v)&&!['admin','dispatcher'].includes(role))return;if(v==='RADIUS NAS'&&!['admin','dispatcher'].includes(role))return;
    let b=document.createElement('button');b.textContent=v;b.onclick=()=>{tab=v;render()};b.dataset.tab=v;root.querySelector('#nav').append(b)});
@@ -58,22 +58,67 @@ function render(){
  else if(tab==='Tickets')list(content,'tickets','Support tickets',['number','subject','account','type','priority','status','created_at']);
  else if(tab==='Billing')list(content,'invoices','Invoices',['number','account','total','paid','outstanding','status','due_date']);
  else if(tab==='Billing Policy')billingPolicy(content);
+ else if(tab==='Customer Portal')portalAccounts(content);
  else if(tab==='Staff')list(content,'staff','Staff accounts',['username','role','enabled','created_at']);
 }
 function notice(text,isError=false){
  const target=root.querySelector('#message');if(target){target.className=isError?'error':'notice';target.textContent=text}else alert(text);
 }
 
+
+function portalAccounts(el){
+ if(role!=='admin'){el.textContent='Administrator access required.';return}
+ el.innerHTML+='<h1>Customer portal accounts</h1><p class="sub">Separate subscriber credentials, revocable sessions and a customer-facing portal. Passwords are never retrievable.</p><div class="card"><h2>Provision subscriber access</h2><form id="portal-create"><div class="formgrid"><div><label>Customer</label><select id="portal-customer" name="customerId" required><option value="">Select customer</option>'+(data.customers||[]).map(c=>'<option value="'+esc(c.id)+'">'+esc(c.account)+' — '+esc(c.first_name)+' '+esc(c.surname)+'</option>').join('')+'</select></div><div><label>Portal username</label><input name="username" id="portal-username" required minlength="3" maxlength="80"></div><div><label>Initial password (at least 14 characters)</label><input name="password" type="password" minlength="14" autocomplete="new-password" required></div></div><div class="actions"><button class="primary">Create account</button><a href="/portal/" target="_blank" rel="noopener noreferrer">Open customer portal</a></div><p id="portal-note" role="status"></p></form></div><div class="card topgap"><div class="toolbar"><h2>Provisioned accounts</h2><button id="portal-reload">Refresh</button></div><div id="portal-list">Loading…</div></div>';
+ const customer=el.querySelector('#portal-customer'),username=el.querySelector('#portal-username'),message=el.querySelector('#portal-note'),list=el.querySelector('#portal-list'),form=el.querySelector('#portal-create');
+ customer.onchange=()=>{const found=(data.customers||[]).find(c=>c.id===customer.value);username.value=found?.account||''};
+ async function draw(){
+  try{
+   const records=await api('/customer-portal/accounts');
+   list.innerHTML='<div class="tablewrap"><table><thead><tr><th>Customer</th><th>Portal login</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead><tbody>'+records.map(r=>'<tr><td>'+esc(r.account)+'</td><td>'+esc(r.username)+'</td><td>'+esc(r.enabled?'Enabled':'Disabled')+'</td><td>'+esc(r.updated_at)+'</td><td><button data-op="reset" data-id="'+esc(r.customer_id)+'">Reset</button> <button data-op="'+(r.enabled?'disable':'enable')+'" data-id="'+esc(r.customer_id)+'">'+(r.enabled?'Disable':'Enable')+'</button></td></tr>').join('')+'</tbody></table></div>'+(records.length?'':'<p>No portal accounts yet.</p>');
+   list.querySelectorAll('[data-op]').forEach(btn=>btn.onclick=async()=>{
+    const action=btn.dataset.op,id=btn.dataset.id,body={action};
+    if(action==='reset'){
+     const next=prompt('Enter a new unique password with at least 14 characters. Share it securely with the subscriber.');
+     if(next===null)return;
+     if(next.length<14){message.textContent='Password must have at least 14 characters.';return}
+     body.password=next;
+    }else if(!confirm((action==='disable'?'Disable':'Enable')+' portal access? All previous login sessions will be revoked.'))return;
+    try{await api('/customer-portal/accounts/'+id,'PUT',body);message.textContent='Account updated and previous sessions revoked.';await draw()}
+    catch(e){message.textContent=e.message}
+   });
+  }catch(e){list.textContent=e.message}
+ }
+ form.onsubmit=async e=>{e.preventDefault();
+  try{const values=Object.fromEntries(new FormData(form));await api('/customer-portal/accounts','POST',values);form.reset();message.textContent='Subscriber portal account created. Share credentials through a verified private channel.';await draw()}
+  catch(e){message.textContent=e.message}
+ };
+ el.querySelector('#portal-reload').onclick=draw;draw();
+}
+async function ticketConversation(ticket){
+ const dialogBox=dialog('<div class="toolbar"><div><h2>Ticket #'+esc(ticket.number)+'</h2><p class="sub">'+esc(ticket.subject)+'</p></div><button id="close">Close</button></div><div class="note">Public replies appear in the customer portal. Internal notes are visible to staff only.</div><div id="staff-messages">Loading…</div><form id="compose"><label>Reply visibility</label><select name="visibility"><option value="internal">Internal staff note</option><option value="public">Public subscriber reply</option></select><label>Message</label><textarea name="body" rows="5" minlength="1" maxlength="4000" required></textarea><p class="error" id="compose-error"></p><button class="primary">Post message</button></form>');
+ dialogBox.querySelector('#close').onclick=()=>dialogBox.close();
+ const output=dialogBox.querySelector('#staff-messages');
+ async function draw(){
+  try{const messages=await api('/tickets/'+ticket.id+'/messages');
+   output.innerHTML=messages.map(m=>'<div class="card" style="margin:10px 0"><small>'+esc(m.visibility)+' · '+esc(m.actor_type)+' · '+esc(m.author)+' · '+esc(m.created_at)+'</small><p style="white-space:pre-wrap;overflow-wrap:anywhere">'+esc(m.body)+'</p></div>').join('')||'<p class="muted">No messages yet.</p>';
+  }catch(e){output.textContent=e.message}
+ }
+ dialogBox.querySelector('#compose').onsubmit=async e=>{e.preventDefault();const values=Object.fromEntries(new FormData(e.target));
+  try{await api('/tickets/'+ticket.id+'/messages','POST',values);e.target.querySelector('textarea').value='';dialogBox.querySelector('#compose-error').textContent='Message posted.';await draw()}
+  catch(err){dialogBox.querySelector('#compose-error').textContent=err.message}
+ };
+ draw();
+}
 function numberGb(bytes){return ((Number(bytes)||0)/1073741824).toFixed(2)+' GB'}
 function radiusUsage(el){
  const today=new Date().toISOString().slice(0,7);
- el.insertAdjacentHTML('beforeend','<div class="toolbar"><div><h1>Subscriber RADIUS usage</h1><p class="sub">Summaries from FreeRADIUS accounting, grouped by session start month.</p></div><label>Month <input id="usage-period" type="month" value="'+today+'" min="2020-01"></label></div><p class="notice warning">Long-running sessions crossing billing months are not split. These figures are operational estimates, not billable usage.</p><div id="usage-content" class="card">Loading…</div>');
+ el.insertAdjacentHTML('beforeend','<div class="toolbar"><div><h1>Subscriber RADIUS usage</h1><p class="sub">Observed RADIUS counter deltas, apportioned to UTC calendar months.</p></div><label>Month <input id="usage-period" type="month" value="'+today+'" min="2020-01"></label></div><p class="notice warning">Observed usage is split proportionally across UTC months. Missing historical intervals and counter resets remain excluded. Do not use as billable usage.</p><div id="usage-content" class="card">Loading…</div>');
  const input=el.querySelector('#usage-period'),content=el.querySelector('#usage-content');
  async function load(){content.textContent='Loading accounting data…';
   try{
-   const result=await api('/radius/usage?period='+encodeURIComponent(input.value));
+   const result=await api('/radius/usage-reconciled?period='+encodeURIComponent(input.value));
    const rows=result.records;
-   content.innerHTML='<div class="tablewrap"><table><thead><tr><th>Account</th><th>PPPoE login</th><th>Sessions</th><th>Download</th><th>Upload</th><th>Unclosed</th></tr></thead><tbody>'+rows.map(row=>'<tr><td>'+esc(row.account)+'</td><td>'+esc(row.username)+'</td><td>'+esc(row.sessions)+'</td><td>'+esc(numberGb(row.download_bytes))+'</td><td>'+esc(numberGb(row.upload_bytes))+'</td><td>'+esc(row.unclosed)+'</td></tr>').join('')+'</tbody></table></div><p class="sub">'+esc(result.note)+'</p>';
+   content.innerHTML='<div class="tablewrap"><table><thead><tr><th>Account</th><th>PPPoE login</th><th>Observed intervals</th><th>Download</th><th>Upload</th></tr></thead><tbody>'+rows.map(row=>'<tr><td>'+esc(row.account)+'</td><td>'+esc(row.username)+'</td><td>'+esc(row.observed_intervals)+'</td><td>'+esc(numberGb(row.download_bytes))+'</td><td>'+esc(numberGb(row.upload_bytes))+'</td></tr>').join('')+'</tbody></table></div><p class="sub">Data quality: '+esc(result.anomalyCount)+' detected counter anomalies. '+esc(result.note)+'</p>';
   }catch(e){content.textContent=e.message}
  }
  input.addEventListener('change',load);load();
@@ -267,6 +312,11 @@ function details(collection,r){
   if(r.state==='suspended')btn('Reactivate PPPoE authentication',()=>{
    if(confirm('Reactivate this subscriber? The customer must be active and a PPPoE password must be stored.'))run('/services/'+r.id+'/reactivate')
   });
+ }
+ if(collection==='customers'&&role==='admin')
+  btn('Customer portal access',()=>{d.close();tab='Customer Portal';render();const selector=root.querySelector('#portal-customer');if(selector){selector.value=r.id;selector.dispatchEvent(new Event('change'))}});
+ if(collection==='tickets'){
+  btn('Ticket conversation',()=>{d.close();ticketConversation(r)});
  }
  if(collection==='tickets'&&role!=='viewer'){
   ['in_progress','pending','resolved','closed'].forEach(status=>btn('Mark '+status,async()=>{
