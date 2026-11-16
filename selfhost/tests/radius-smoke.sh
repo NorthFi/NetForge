@@ -48,6 +48,9 @@ grep -q 'Access-Reject' "$BASE/authfail"
 api "/services/$service/suspend" '{}'
 docker compose exec -T radius radtest rad-ci-user RadiusCiUserPassword2026 127.0.0.1 0 testing123 | tee "$BASE/authsuspend" || true
 grep -q 'Access-Reject' "$BASE/authsuspend"
+api "/services/$service/reactivate" '{}'
+docker compose exec -T radius radtest rad-ci-user RadiusCiUserPassword2026 127.0.0.1 0 testing123 | tee "$BASE/authrestored"
+grep -q 'Access-Accept' "$BASE/authrestored"
 # Verify that the bundled Caddy profile serves the application over HTTPS.
 docker compose --profile https up -d proxy
 for i in $(seq 1 30); do

@@ -3,7 +3,8 @@
 set -Eeuo pipefail
 BASE="$(mktemp -d)"
 PID=""
-trap 'if [ -n "$PID" ]; then kill "$PID" 2>/dev/null || true; fi; cat "$BASE/server.log" 2>/dev/null | tail -35 || true; rm -rf "$BASE"' EXIT
+MOCK_PID=""
+trap 'if [ -n "$MOCK_PID" ]; then kill "$MOCK_PID" 2>/dev/null || true; fi; if [ -n "$PID" ]; then kill "$PID" 2>/dev/null || true; fi; cat "$BASE/server.log" 2>/dev/null | tail -35 || true; rm -rf "$BASE"' EXIT
 export ASPNETCORE_URLS="http://127.0.0.1:18990"
 export Database__ConnectionString="Host=127.0.0.1;Port=55432;Database=netforge_ci;Username=netforge_ci;Password=netforge_test_very_strong_secret"
 export NETFORGE_ADMIN_USER="ciadmin"
@@ -75,4 +76,80 @@ api GET /services "" 200
 grep -q '"radius_enabled":false' "$BASE/result.json"
 api GET /dashboard "" 200
 api GET /audit "" 200
+
+# New phase: service speed changes, suspend/restore, and opt-in collections policy.
+api POST /packages '{"name":"50 Mbps WISP","downloadMbps":50,"uploadMbps":20,"monthlyPrice":699,"mikrotikRateLimit":""}' 201
+FAST_PACKAGE="$(id)"
+api PUT "/services/$SERVICE/package" "{\"packageId\":\"$FAST_PACKAGE\"}" 200
+grep -q '"rateLimit":"20M/50M"' "$BASE/result.json"
+api GET /billing/enforcement "" 200
+grep -q '"enabled":false' "$BASE/result.json"
+api POST "/services/$SERVICE/credentials" '{"password":"rotated-for-manual-suspension"}' 200
+api GET /services "" 200
+grep -q '"radius_enabled":false' "$BASE/result.json"
+api POST "/services/$SERVICE/reactivate" '{}' 200
+api GET /services "" 200
+grep -q '"radius_enabled":true' "$BASE/result.json"
+api POST /invoices "{\"customerId\":\"$CUSTOMER\",\"number\":\"CI-OVERDUE-2025\",\"total\":125,\"dueDate\":\"2025-01-01\"}" 201
+OVERDUE="$(id)"
+api POST "/invoices/$OVERDUE/issue" '{}' 200
+api PUT /billing/enforcement '{"enabled":true,"graceDays":0,"restoreWhenPaid":true}' 200
+api POST /billing/enforcement/run '{}' 200
+grep -q '"suspended":1' "$BASE/result.json"
+api GET /services "" 200
+grep -q '"suspension_reason":"overdue"' "$BASE/result.json"
+grep -q '"radius_enabled":false' "$BASE/result.json"
+api POST /payments "{\"invoiceId\":\"$OVERDUE\",\"amount\":125,\"reference\":\"CI-SETTLED-2025\"}" 200
+api POST /billing/enforcement/run '{}' 200
+grep -q '"restored":1' "$BASE/result.json"
+api GET /services "" 200
+grep -q '"radius_enabled":true' "$BASE/result.json"
+api PUT /billing/enforcement '{"enabled":false,"graceDays":7,"restoreWhenPaid":false}' 200
+api GET "/radius/usage?period=2026-11" "" 200
+grep -q '"period":"2026-11"' "$BASE/result.json"
+
+# Disconnect destinations are exclusively saved administrator-owned NAS clients.
+api POST /radius/nas '{"address":"127.0.0.1","name":"Loopback disconnect simulator","secret":"mock-radius-shared-secret-2026","description":"Test-only responder"}' 201
+LOOP_NAS="$(id)"
+api PUT "/radius/nas/$LOOP_NAS/settings" '{"vendor":"mikrotik","disconnectPort":19700,"disconnectEnabled":true}' 200
+api GET /radius/nas-management "" 200
+grep -q '"disconnect_port":19700' "$BASE/result.json"
+if grep -q 'mock-radius-shared-secret-2026' "$BASE/result.json"; then echo "NAS secret leaked" >&2; exit 1; fi
+
+PGCONTAINER="$(docker ps --filter ancestor=postgres:17 --format '{{.ID}}' | head -n1)"
+test -n "$PGCONTAINER"
+insert_session() {
+  local unique="$1" acctid
+  acctid="$(docker exec "$PGCONTAINER" psql -U netforge_ci -d netforge_ci -Atqc \
+    "INSERT INTO radacct(acctsessionid,acctuniqueid,username,nasipaddress,acctstarttime,acctupdatetime,acctstoptime)
+     VALUES ('$unique','$unique','ci-pppoe@example.test','127.0.0.1',now()-interval '1 minute',now(),NULL)
+     RETURNING radacctid;" | tail -n1)"
+  test -n "$acctid"
+  echo "$acctid"
+}
+MOCK_SESSION="$(insert_session 'NETFORGE-TEST-ACK')"
+REQUEST_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+RADIUS_MOCK_SECRET=mock-radius-shared-secret-2026 python3 selfhost/tests/radius-mock.py \
+  --port 19700 --mode ack > "$BASE/mock.log" 2>&1 &
+MOCK_PID="$!"
+sleep 0.25
+api POST "/radius/sessions/$MOCK_SESSION/disconnect" "{\"requestId\":\"$REQUEST_ID\",\"reason\":\"CI controlled session reset\",\"confirm\":true}" 200
+grep -q '"result":"ack"' "$BASE/result.json"
+wait "$MOCK_PID"
+MOCK_PID=""
+api POST "/radius/sessions/$MOCK_SESSION/disconnect" "{\"requestId\":\"$REQUEST_ID\",\"reason\":\"CI controlled session reset\",\"confirm\":true}" 200
+grep -q '"replayed":true' "$BASE/result.json"
+INVALID_SESSION="$(insert_session 'NETFORGE-TEST-BAD')"
+RADIUS_MOCK_SECRET=mock-radius-shared-secret-2026 python3 selfhost/tests/radius-mock.py \
+  --port 19700 --mode invalid > "$BASE/mock-bad.log" 2>&1 &
+MOCK_PID="$!"
+sleep 0.25
+REQUEST_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+api POST "/radius/sessions/$INVALID_SESSION/disconnect" "{\"requestId\":\"$REQUEST_ID\",\"reason\":\"CI verify response authenticator\",\"confirm\":true}" 200
+grep -q '"result":"error"' "$BASE/result.json"
+wait "$MOCK_PID"
+MOCK_PID=""
+api GET /radius/operations "" 200
+if grep -q 'mock-radius-shared-secret-2026' "$BASE/result.json"; then echo "Secret leaked in operation history" >&2; exit 1; fi
+
 echo "NetForge .NET 11 / PostgreSQL API smoke passed."
