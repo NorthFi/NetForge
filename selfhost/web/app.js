@@ -122,7 +122,8 @@ function create(collection,values={}){
 }
 function list(el,collection,title,fields){
  let rows=data[collection]||[],query='';
- el.insertAdjacentHTML('beforeend','<div class="toolbar"><div><h1>'+esc(title)+'</h1><p class="sub">'+rows.length+' records</p></div><div class="buttons"><button id="refresh">Refresh</button>'+(role!=='viewer'&&!(collection==='staff'&&role!=='admin')?'<button class="primary" id="add">+ Add</button>':'')+'</div></div><input id="search" placeholder="Search '+esc(collection)+'..." style="max-width:360px;margin-bottom:14px" aria-label="Search records"><div id="table"></div>');
+ const adminOnly=['staff','nas','packages','invoices'],mayCreate=role==='admin'||(role!=='viewer'&&!adminOnly.includes(collection));
+ el.insertAdjacentHTML('beforeend','<div class="toolbar"><div><h1>'+esc(title)+'</h1><p class="sub">'+rows.length+' records</p></div><div class="buttons"><button id="refresh">Refresh</button>'+(collection==='invoices'&&role==='admin'?'<button id="monthly">Generate monthly drafts</button>':'')+(mayCreate?'<button class="primary" id="add">+ Add</button>':'')+'</div></div><input id="search" placeholder="Search '+esc(collection)+'..." style="max-width:360px;margin-bottom:14px" aria-label="Search records"><div id="table"></div>');
  const draw=()=>{
   const shown=rows.filter(x=>JSON.stringify(x).toLowerCase().includes(query));
   el.querySelector('#table').innerHTML='<div class="card tablewrap"><table><thead><tr>'+fields.map(k=>'<th>'+esc(k.replaceAll('_',' '))+'</th>').join('')+'</tr></thead><tbody>'+shown.map(x=>'<tr data-id="'+esc(x.id||x.radacctid)+'">'+fields.map(k=>'<td>'+esc(x[k]??'—')+'</td>').join('')+'</tr>').join('')+'</tbody></table>'+(shown.length?'':'<p>No matching records.</p>')+'</div>';
@@ -131,6 +132,16 @@ function list(el,collection,title,fields){
  el.querySelector('#search').oninput=e=>{query=e.target.value.toLowerCase();draw()};
  el.querySelector('#refresh').onclick=refresh;
  const add=el.querySelector('#add');if(add)add.onclick=()=>create(collection);
+ const monthly=el.querySelector('#monthly');
+ if(monthly)monthly.onclick=async()=>{
+  const period=prompt('Billing month (YYYY-MM):',new Date().toISOString().slice(0,7));
+  if(period===null)return;
+  if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(period)){notice('Use YYYY-MM, e.g. 2026-11',true);return}
+  if(!confirm('Generate draft invoices for active, priced services in '+period+'? No payments or messages will be sent.'))return;
+  try{const response=await api('/billing/monthly-drafts','POST',{period:period+'-01'});await refresh();notice(response.created+' new draft invoice(s) created for '+period)}
+  catch(err){notice(err.message,true)}
+ };
+
  draw();
 }
 function details(collection,r){
