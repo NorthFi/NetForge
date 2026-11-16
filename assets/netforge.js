@@ -540,6 +540,14 @@ function ticket360(id){
  d.querySelector('#log-work').onclick=()=>{d.close();form('ticket_worklogs',null,{ticket_id:id,technician_id:r.technician_id,name:'Ticket work',minutes:'15',work_date:dateKey(new Date())})};
  const callB=d.querySelector('#log-call');if(callB)callB.onclick=()=>{d.close();form('activities',null,{customer_id:r.customer_id,ticket_id:id,name:'Support call',type:'call',channel:'phone'})};
  d.querySelector('#job-from-ticket').onclick=()=>{d.close();form('workorders',null,{ticket_id:id,customer_id:r.customer_id,highsite_id:r.highsite_id,technician_id:r.technician_id,branch_id:r.branch_id,status:'open',name:'Field work: '+r.name})};
+ const ticketMessages=all('ticket_messages').filter(x=>x.ticket_id===id).sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
+ d.insertAdjacentHTML('beforeend','<div class="section card"><h3>Ticket conversation</h3><p class="nf-detail-subtitle">Public replies appear in the subscriber portal. Internal notes remain visible only to staff.</p>'+ticketMessages.map(m=>'<div class="nf-sidecard" style="margin:9px 0"><small>'+esc(m.author||m.source)+' · '+esc(m.created_at)+' · '+esc(m.visibility)+'</small><p>'+esc(m.body||'')+'</p></div>').join('')+'<form id="ticket-conversation-form"><label>Message visibility</label><select name="visibility"><option value="internal">Internal staff note</option><option value="public">Public customer reply</option></select><label>Message</label><textarea name="body" rows="4" maxlength="4000" required></textarea><p id="ticket-conversation-error" role="status"></p><button class="primary">Add message</button></form></div>');
+ d.querySelector('#ticket-conversation-form').onsubmit=async e=>{
+  e.preventDefault();const data=Object.fromEntries(new FormData(e.target)),body=data.body.trim();
+  try{await call({category:'ticket_messages'},'POST',{name:body.slice(0,100),ticket_id:id,visibility:data.visibility,body});d.close();await refresh();ticket360(id)}
+  catch(err){d.querySelector('#ticket-conversation-error').textContent=err.message}
+ };
+
 }
 function inventoryManager(){
  const el=document.querySelector('#content'),rows=all('inventory');
