@@ -68,7 +68,7 @@ public static class NetworkMonitoring
                 VALUES(@nas,@equipment,@name,@port,@enabled,@interval,@threshold)
                 RETURNING id
                 """,P("nas",input.NasId),P("equipment",input.EquipmentId),
-                P("name",input.Name.Trim()),P("port",input.TcpPort),
+                P("name",input.Name!.Trim()),P("port",input.TcpPort),
                 P("enabled",input.Enabled),P("interval",input.IntervalSeconds),
                 P("threshold",input.FailureThreshold));
             await Store.Audit(db,ctx.User.Identity?.Name??"unknown",
