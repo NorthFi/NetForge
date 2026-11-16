@@ -147,7 +147,8 @@ public static class BillingScheduler
                 INSERT INTO invoices(customer_id,number,period,total,due_date)
                 SELECT t.customer_id,
                     'NF-'||to_char(@period::date,'YYYYMM')||'-'||t.customer_id::text,
-                    @period::date,t.total,(@period::date+@due)::date
+                    @period::date,t.total,
+                    GREATEST((@period::date+@due)::date,(CURRENT_DATE+@due)::date)
                 FROM totals t
                 ON CONFLICT(customer_id,period) DO NOTHING
                 RETURNING id,customer_id,number,total
