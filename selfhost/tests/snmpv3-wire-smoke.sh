@@ -41,6 +41,8 @@ done
 if [[ "$status" -ne 0 ]]; then
   echo "SNMPv3 authPriv agent test failed. Inspect local runner SNMP configuration." >&2
   tail -n 12 "$BASE/client.err" | sed -E 's/(CI-AuthSecret|CI-PrivacySecret)[^ ]*/REDACTED/g' >&2
+  echo "SNMP agent recent log:" >&2
+  tail -n 30 "$BASE/agent.log" | sed -E 's/(CI-AuthSecret|CI-PrivacySecret)[^ ]*/REDACTED/g' >&2
   exit 1
 fi
 python3 - "$BASE/response" <<'PY'
