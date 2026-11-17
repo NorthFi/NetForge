@@ -359,7 +359,7 @@ public static class SnmpTelemetry
 
     public static async Task<object?> Poll(NpgsqlDataSource db,
         IDataProtectionProvider provider,IConfiguration config,Guid deviceId,
-        CancellationToken cancellation)
+        CancellationToken cancellation,bool manual=true)
     {
         await using var conn=await db.OpenConnectionAsync(cancellation);
         await using var tx=await conn.BeginTransactionAsync(cancellation);
@@ -367,6 +367,7 @@ public static class SnmpTelemetry
             SELECT d.id,d.name,d.username,d.auth_protocol,d.auth_secret_ciphertext,
                    d.priv_secret_ciphertext,d.udp_port,d.interface_index,
                    d.interval_seconds,d.enabled,d.failure_streak,d.state,d.highsite_id,
+                   d.next_poll_at,
                    COALESCE(n.nasname,host(e.management_ip)) AS address
             FROM snmp_devices d
             LEFT JOIN equipment e ON e.id=d.equipment_id
@@ -377,6 +378,12 @@ public static class SnmpTelemetry
         var row=rows.Single();
         if(row["enabled"] is not true)
             return new{ok=false,note="SNMP polling disabled",state=row["state"]};
+        // When multiple API replicas discover the same due row, re-check the
+        // due timestamp AFTER acquiring its row lock. Manual administrator
+        // polls deliberately bypass the schedule.
+        if(!manual && row["next_poll_at"] is DateTime nextPoll &&
+           nextPoll>DateTime.UtcNow)
+            return new{ok=false,note="Another worker already polled this profile",state=row["state"]};
         var source=row["address"] as string;
         if(!IPAddress.TryParse(source,out var ip) ||
            ip.AddressFamily!=AddressFamily.InterNetwork)
@@ -493,7 +500,7 @@ public static class SnmpTelemetry
             cancellation.ThrowIfCancellationRequested();
             try
             {
-                await Poll(db,protector,config,(Guid)row["id"]!,cancellation);
+                await Poll(db,protector,config,(Guid)row["id"]!,cancellation,manual:false);
                 count++;
             }
             catch(OperationCanceledException) when(cancellation.IsCancellationRequested){throw;}
