@@ -11,6 +11,8 @@ cat > "$BASE/agent/snmpd.conf" <<'SNMPD'
 agentAddress udp:127.0.0.1:1161
 rouser ciSNMPv3 priv
 sysLocation CI isolated lab
+# Fixture only: loaded from an explicit private agent config for deterministic CI.
+createUser ciSNMPv3 SHA-256 "CI-AuthSecret-Strong-2026" AES "CI-PrivacySecret-Strong-2026"
 SNMPD
 cat > "$BASE/state/snmpd.conf" <<'SNMPUSER'
 createUser ciSNMPv3 SHA-256 "CI-AuthSecret-Strong-2026" AES "CI-PrivacySecret-Strong-2026"
@@ -27,7 +29,7 @@ SNMPCONFIG
 chmod 600 "$BASE/agent/snmpd.conf" "$BASE/state/snmpd.conf" "$BASE/client/snmp.conf"
 
 # Use isolated environment directories, not the host's system SNMP users.
-MIBS=: SNMPCONFPATH="$BASE/agent" SNMP_PERSISTENT_DIR="$BASE/state" SNMP_PERSISTENT_FILE="$BASE/state/snmpd.conf" snmpd -f -Lo > "$BASE/agent.log" 2>&1 &
+MIBS=: SNMPCONFPATH="$BASE/agent" SNMP_PERSISTENT_DIR="$BASE/state" snmpd -f -Lo -C -c "$BASE/agent/snmpd.conf" > "$BASE/agent.log" 2>&1 &
 AGENT_PID="$!"
 ifIndex="$(cat /sys/class/net/lo/ifindex)"
 test "$ifIndex" -ge 1
