@@ -34,6 +34,7 @@ public static class NetworkMonitoring
                        t.enabled,t.interval_seconds,t.failure_threshold,
                        t.failure_streak,t.state,t.last_checked_at,
                        t.last_latency_ms,t.next_check_at,t.last_error,
+                       t.highsite_id,t.is_upstream,
                        COALESCE(n.nasname,host(e.management_ip)) AS address
                 FROM monitor_targets t
                 LEFT JOIN nas n ON n.id=t.nas_id
@@ -107,7 +108,7 @@ public static class NetworkMonitoring
             if(!ctx.User.IsInRole("admin")&&!ctx.User.IsInRole("dispatcher"))
                 return Denied();
             return Results.Ok(await Store.Rows(db,"""
-                SELECT e.id,e.target_id,t.name,e.transition,e.detail,e.occurred_at
+                SELECT e.id,e.target_id,t.name,e.transition,e.suppressed,e.detail,e.occurred_at
                 FROM monitor_events e JOIN monitor_targets t ON t.id=e.target_id
                 ORDER BY e.occurred_at DESC LIMIT 500
                 """));
@@ -123,7 +124,7 @@ public static class NetworkMonitoring
         // has a bounded 2-second deadline to avoid long locks on down devices.
         var rows=await NetworkManagement.Query(conn,(NpgsqlTransaction)tx,"""
             SELECT t.id,t.name,t.tcp_port,t.interval_seconds,t.failure_threshold,
-                   t.failure_streak,t.state,t.enabled,
+                   t.failure_streak,t.state,t.enabled,t.highsite_id,t.is_upstream,
                    COALESCE(n.nasname,host(e.management_ip)) AS address
             FROM monitor_targets t
             LEFT JOIN nas n ON n.id=t.nas_id
@@ -185,9 +186,10 @@ public static class NetworkMonitoring
                 """,P("target",targetId),P("transition",transition),
                 P("detail",detail));
             var eventId=(Guid)events.Single()["id"]!;
-            await Notifications.EnqueueMonitorEvent(conn,(NpgsqlTransaction)tx,eventId,
-                "Monitor "+row["name"]+" ("+ip+":"+port+") is "+transition+". "+detail,
-                config);
+            await SiteImpact.HandleTcpTransition(conn,(NpgsqlTransaction)tx,
+                targetId,eventId,row["highsite_id"] as Guid?,
+                row["is_upstream"] is true,transition,(string)row["name"]!,
+                ip.ToString(),port,config);
         }
         await tx.CommitAsync(cancellation);
         return new{ok=true,state,reachable,failures=streak,latencyMs=latency,
