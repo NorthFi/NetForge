@@ -25,12 +25,15 @@ selfhost/
     BillingScheduler.cs
     Notifications.cs
     NetworkMonitoring.cs
+    SiteImpact.cs
+    SnmpTelemetry.cs
   db/
     001_init.sql
     002_radius_management.sql
     003_subscriber_portal_accounting.sql
     004_financial_ledger_reconciliation.sql
     005_operations_automation.sql
+    006_wisp_telemetry.sql
   radius/
     Dockerfile
     entrypoint.sh
@@ -38,6 +41,7 @@ selfhost/
     index.html
     style.css
     app.js
+    telemetry.js
     portal/
       index.html
       style.css
@@ -138,6 +142,25 @@ risk controls.
 - No SNMPv3, ICMP, RF quality statistics, VAT/proration, PDF invoice
   delivery, or automatic bank payment matching is included yet.
 
+## Phase 6: WISP telemetry and upstream impact
+
+Two new staff views, **SNMP Telemetry** and **Highsite Impact**, extend the
+existing TCP Network Monitoring module. See
+[WISP telemetry and highsite correlation runbook](selfhost/WISP_TELEMETRY.md).
+
+- Inventoried SNMPv3 authPriv devices only, SHA-256/SHA with AES128,
+  encrypted USM credentials using the persisted ASP.NET Core key ring;
+  Docker installs a real Net-SNMP client.
+- Read-only IF-MIB 64-bit interface counters, timestamped samples,
+  calculated bps and detection of device reboots/counter resets.
+- Historical interface bitrate charts and interface-status event history.
+- Explicit highsite/upstream tags for TCP monitors and potential
+  highsite-impact alerts with snapshot customer/sector counts.
+- Child TCP/SNMP notification suppression during tagged upstream outages,
+  while preserving full individual event history.
+- **New SNMP polling is disabled by default.** This is not ICMP,
+  SNMPv2c, traffic flow analysis, a full RF graph or an OLT/ACS controller.
+
 ## Current capabilities
 
 - Staff login with PBKDF2 password hashes, cookie authentication, role checks and request CSRF tokens.
@@ -173,7 +196,7 @@ Set `Database__ConnectionString`, `NETFORGE_ADMIN_USER`, `NETFORGE_ADMIN_PASSWOR
 
 ## Current gaps versus full Splynx functionality
 
-Do **not** assume this is complete Splynx functionality. Missing major components include multi-factor authentication, payment gateways and automatic bank feeds, VAT-compliant invoicing and proration, refunds and prepaid vouchers, usage-based rating, true live-session CoA speed changes, NAS configuration automation, TR-069/USP ACS, ICMP/SNMPv3/RF telemetry, notification templates and confirmed external delivery, scoped API tokens, backup/restore UI, VoIP CDR billing, technician dispatch, procurement, contracts, granular RBAC, multi-tenant isolation, and high availability.
+Do **not** assume this is complete Splynx functionality. Missing major components include multi-factor authentication, payment gateways and automatic bank feeds, VAT-compliant invoicing and proration, refunds and prepaid vouchers, usage-based rating, true live-session CoA speed changes, NAS configuration automation, TR-069/USP ACS, ICMP, vendor-specific SNMP CPU/memory/RF telemetry, telemetry retention/rollups, notification templates and confirmed external delivery, scoped API tokens, backup/restore UI, VoIP CDR billing, technician dispatch, procurement, contracts, granular RBAC, multi-tenant isolation, and high availability.
 
 This branch **intentionally excludes the RF link planner**. It retains basic WISP highsite/sector/subscriber relationships and equipment records.
 
