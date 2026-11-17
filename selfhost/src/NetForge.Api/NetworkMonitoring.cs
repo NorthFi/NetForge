@@ -116,7 +116,7 @@ public static class NetworkMonitoring
     }
 
     public static async Task<object?> Check(NpgsqlDataSource db,IConfiguration config,
-        Guid targetId,CancellationToken cancellation)
+        Guid targetId,CancellationToken cancellation,bool manual=true)
     {
         await using var conn=await db.OpenConnectionAsync(cancellation);
         await using var tx=await conn.BeginTransactionAsync(cancellation);
@@ -124,7 +124,7 @@ public static class NetworkMonitoring
         // has a bounded 2-second deadline to avoid long locks on down devices.
         var rows=await NetworkManagement.Query(conn,(NpgsqlTransaction)tx,"""
             SELECT t.id,t.name,t.tcp_port,t.interval_seconds,t.failure_threshold,
-                   t.failure_streak,t.state,t.enabled,t.highsite_id,t.is_upstream,
+                   t.failure_streak,t.state,t.enabled,t.highsite_id,t.is_upstream,t.next_check_at,
                    COALESCE(n.nasname,host(e.management_ip)) AS address
             FROM monitor_targets t
             LEFT JOIN nas n ON n.id=t.nas_id
@@ -135,6 +135,9 @@ public static class NetworkMonitoring
         var row=rows.Single();
         if(row["enabled"] is not true)
             return new{ok=false,state=row["state"],note="Target disabled"};
+        if(!manual && row["next_check_at"] is DateTime next &&
+           next>DateTime.UtcNow)
+            return new{ok=false,state=row["state"],note="Another worker already checked this target"};
         var ipValue=row["address"] as string;
         if(!IPAddress.TryParse(ipValue,out var ip) ||
            ip.AddressFamily!=AddressFamily.InterNetwork)
@@ -211,7 +214,7 @@ public static class NetworkMonitoring
             cancellation.ThrowIfCancellationRequested();
             try
             {
-                await Check(db,config,(Guid)item["id"]!,cancellation);
+                await Check(db,config,(Guid)item["id"]!,cancellation,manual:false);
                 count++;
             }
             catch(OperationCanceledException) when(cancellation.IsCancellationRequested){throw;}
