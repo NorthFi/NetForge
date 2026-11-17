@@ -2,7 +2,7 @@
 'use strict';
 const root=document.querySelector('#root'),identity=document.querySelector('#identity'),logout=document.querySelector('#logout');
 let csrf='',role='',username='',tab='Dashboard',data={};
-const views=['Dashboard','Customers','Services','Packages','Highsites','Sectors','Equipment','RADIUS NAS','RADIUS Sessions','RADIUS Usage','RADIUS Operations','Tickets','Billing','Bank Reconciliation','Financial Ledger','Billing Policy','Invoice Automation','Notifications','Network Monitoring','Customer Portal','Staff'];
+const views=['Dashboard','Customers','Services','Packages','Highsites','Sectors','Equipment','RADIUS NAS','RADIUS Sessions','RADIUS Usage','RADIUS Operations','Tickets','Billing','Bank Reconciliation','Financial Ledger','Billing Policy','Invoice Automation','Notifications','Network Monitoring','SNMP Telemetry','Highsite Impact','Customer Portal','Staff'];
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
 const money=n=>new Intl.NumberFormat('en-ZA',{style:'currency',currency:'ZAR'}).format(Number(n)||0);
 async function api(path,method='GET',payload){
@@ -26,7 +26,7 @@ async function boot(skipAuth=false){
   root.innerHTML='<div class="shell"><nav id="nav"></nav><main id="content"></main></div>';
   views.forEach(v=>{if((v==='Staff'||v==='Customer Portal'||v==='Bank Reconciliation'||v==='Financial Ledger'||v==='Invoice Automation'||v==='Notifications')&&role!=='admin')return;if(v==='Billing'&&!['admin','dispatcher'].includes(role))return;
    if(v==='Billing Policy'&&role!=='admin')return;
-   if(v==='Network Monitoring'&&!['admin','dispatcher'].includes(role))return;
+   if(['Network Monitoring','SNMP Telemetry','Highsite Impact'].includes(v)&&!['admin','dispatcher'].includes(role))return;
    if(['RADIUS Usage','RADIUS Operations'].includes(v)&&!['admin','dispatcher'].includes(role))return;if(v==='RADIUS NAS'&&!['admin','dispatcher'].includes(role))return;
    let b=document.createElement('button');b.textContent=v;b.onclick=()=>{tab=v;render()};b.dataset.tab=v;root.querySelector('#nav').append(b)});
   await refresh();
@@ -64,6 +64,8 @@ function render(){
  else if(tab==='Invoice Automation')invoiceAutomation(content);
  else if(tab==='Notifications')notificationConsole(content);
  else if(tab==='Network Monitoring')networkMonitor(content);
+ else if(tab==='SNMP Telemetry')snmpConsole(content);
+ else if(tab==='Highsite Impact')siteImpactConsole(content);
  else if(tab==='Customer Portal')portalAccounts(content);
  else if(tab==='Staff')list(content,'staff','Staff accounts',['username','role','enabled','created_at']);
 }
@@ -271,7 +273,7 @@ function networkMonitor(el){
  async function draw(){
   try{
    const [all,history]=await Promise.all([api('/monitor/targets'),api('/monitor/events')]);
-   targets.innerHTML='<div class="tablewrap"><table><thead><tr><th>Name</th><th>Address</th><th>TCP</th><th>State</th><th>Failures</th><th>Latency</th><th>Checked</th><th>Action</th></tr></thead><tbody>'+all.map(t=>'<tr><td>'+esc(t.name)+'</td><td>'+esc(t.address)+'</td><td>'+esc(t.tcp_port)+'</td><td>'+esc(t.enabled?t.state:'Disabled')+'</td><td>'+esc(t.failure_streak)+'</td><td>'+esc(t.last_latency_ms??'—')+'</td><td>'+esc(t.last_checked_at||'—')+'</td><td>'+(role==='admin'?'<button data-check="'+esc(t.id)+'">Check</button> <button data-toggle="'+esc(t.id)+'">'+(t.enabled?'Disable':'Enable')+'</button>':'—')+'</td></tr>').join('')+'</tbody></table></div>';
+   targets.innerHTML='<div class="tablewrap"><table><thead><tr><th>Name</th><th>Address</th><th>TCP</th><th>State</th><th>Failures</th><th>Latency</th><th>Checked</th><th>Highsite</th><th>Upstream</th><th>Action</th></tr></thead><tbody>'+all.map(t=>'<tr><td>'+esc(t.name)+'</td><td>'+esc(t.address)+'</td><td>'+esc(t.tcp_port)+'</td><td>'+esc(t.enabled?t.state:'Disabled')+'</td><td>'+esc(t.failure_streak)+'</td><td>'+esc(t.last_latency_ms??'—')+'</td><td>'+esc(t.last_checked_at||'—')+'</td><td>'+esc((data.highsites||[]).find(h=>h.id===t.highsite_id)?.name||'Unassigned')+'</td><td>'+esc(t.is_upstream?'Yes':'No')+'</td><td>'+(role==='admin'?'<button data-check="'+esc(t.id)+'">Check</button> <button data-toggle="'+esc(t.id)+'">'+(t.enabled?'Disable':'Enable')+'</button> <button data-site="'+esc(t.id)+'">Set highsite</button>':'—')+'</td></tr>').join('')+'</tbody></table></div>';
    targets.querySelectorAll('[data-check]').forEach(btn=>btn.onclick=async()=>{try{const r=await api('/monitor/targets/'+btn.dataset.check+'/check','POST',{});msg.textContent=r.note+' State: '+r.state;await draw()}catch(e){msg.textContent=e.message}});
    targets.querySelectorAll('[data-toggle]').forEach(btn=>btn.onclick=async()=>{
     const t=all.find(x=>x.id===btn.dataset.toggle),enabled=!t.enabled;
@@ -279,7 +281,10 @@ function networkMonitor(el){
     try{await api('/monitor/targets/'+t.id,'PUT',{enabled,intervalSeconds:t.interval_seconds,failureThreshold:t.failure_threshold,confirm:true});await draw()}
     catch(e){msg.textContent=e.message}
    });
-   events.innerHTML='<div class="tablewrap"><table><thead><tr><th>When</th><th>Target</th><th>Event</th><th>Detail</th></tr></thead><tbody>'+history.map(e=>'<tr><td>'+esc(e.occurred_at)+'</td><td>'+esc(e.name)+'</td><td>'+esc(e.transition)+'</td><td>'+esc(e.detail)+'</td></tr>').join('')+'</tbody></table></div>';
+   targets.querySelectorAll('[data-site]').forEach(btn=>btn.onclick=()=>{
+    const item=all.find(x=>x.id===btn.dataset.site);if(item)assignTcpSite(item,draw,msg);
+   });
+   events.innerHTML='<div class="tablewrap"><table><thead><tr><th>When</th><th>Target</th><th>Event</th><th>Suppressed</th><th>Detail</th></tr></thead><tbody>'+history.map(e=>'<tr><td>'+esc(e.occurred_at)+'</td><td>'+esc(e.name)+'</td><td>'+esc(e.transition)+'</td><td>'+esc(e.suppressed?'Yes':'No')+'</td><td>'+esc(e.detail)+'</td></tr>').join('')+'</tbody></table></div>';
   }catch(e){targets.textContent=e.message}
  }
  el.querySelector('#monitor-form').onsubmit=async e=>{e.preventDefault();const enabled=el.querySelector('#monitor-enabled').checked,sourceId=source.value;
