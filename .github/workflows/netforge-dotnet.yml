@@ -39,6 +39,7 @@ jobs:
           node --check selfhost/web/app.js
           node --check selfhost/web/telemetry.js
           node --check selfhost/web/rf-console.js
+          node --check selfhost/web/noc-console.js
           node --check selfhost/web/portal/app.js
       - name: Validate FreeRADIUS bootstrap shell
         run: sh -n selfhost/radius/entrypoint.sh
