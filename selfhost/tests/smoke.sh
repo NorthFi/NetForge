@@ -17,6 +17,16 @@ export NETFORGE_SMTP_HOST="127.0.0.1"
 export NETFORGE_SMTP_PORT="12587"
 export NETFORGE_SMTP_FROM="notifications@example.test"
 export NETFORGE_OPERATIONS_EMAIL="noc@example.test"
+# The API invokes the mock through a trusted executable path. The mock verifies
+# authPriv, protected configuration file permissions, and no secrets in argv.
+export NETFORGE_CI_SNMP_MOCK="$PWD/selfhost/tests/snmpget-mock.py"
+export NETFORGE_TEST_SNMP_COUNTER_FILE="$BASE/snmp-counter"
+cat >"$BASE/netforge-snmpget-ci" <<'SNMPWRAP'
+#!/usr/bin/env bash
+exec python3 "$NETFORGE_CI_SNMP_MOCK" "$@"
+SNMPWRAP
+chmod 700 "$BASE/netforge-snmpget-ci"
+export NETFORGE_SNMPGET_PATH="$BASE/netforge-snmpget-ci"
 
 dotnet run --project selfhost/src/NetForge.Api/NetForge.Api.csproj -c Release --no-build >"$BASE/server.log" 2>&1 &
 PID="$!"
@@ -519,6 +529,165 @@ import json,sys
 row=next(x for x in json.load(open(sys.argv[1])) if x['id']==sys.argv[2])
 assert row['enabled'] is False,row
 PY
+api PUT /notifications/settings '{"customerInvoiceEmail":false,"opsEmail":false,"opsTelegram":false}' 200
+
+
+# ------------------------------------------------------------------------
+# Phase 6: highsite correlation, suppression and SNMPv3 encrypted profiles.
+# ------------------------------------------------------------------------
+api GET /monitor/sites "" 200
+api GET /monitor/site-events "" 200
+api PUT "/monitor/targets/$MONITOR_ID/site" "{\"highsiteId\":\"$SITE\",\"isUpstream\":true,\"confirm\":true}" 200
+api GET /monitor/targets "" 200
+python3 - "$BASE/result.json" "$MONITOR_ID" "$SITE" <<'PY'
+import json,sys
+r=next(x for x in json.load(open(sys.argv[1])) if x['id']==sys.argv[2])
+assert r['highsite_id']==sys.argv[3] and r['is_upstream'] is True,r
+assert r['state']=='unknown' and r['failure_streak']==0,r
+PY
+
+# Real operational notification credentials remain the intentionally
+# unreachable SMTP fixture; nothing leaves this runner.
+api PUT /notifications/settings '{"customerInvoiceEmail":false,"opsEmail":true,"opsTelegram":false}' 200
+api PUT "/monitor/targets/$MONITOR_ID" '{"enabled":true,"intervalSeconds":300,"failureThreshold":2,"confirm":true}' 200
+api POST "/monitor/targets/$MONITOR_ID/check" '{}' 200
+api POST "/monitor/targets/$MONITOR_ID/check" '{}' 200
+api GET /monitor/sites "" 200
+python3 - "$BASE/result.json" "$SITE" <<'PY'
+import json,sys
+r=next(x for x in json.load(open(sys.argv[1])) if x['id']==sys.argv[2])
+assert int(r['upstream_down'])==1,r
+assert r['impact_state']=='potential_upstream_outage',r
+assert int(r['affected_customers'])>=1 and int(r['sectors'])>=1,r
+PY
+api GET /monitor/site-events "" 200
+python3 - "$BASE/result.json" "$SITE" <<'PY'
+import json,sys
+rows=json.load(open(sys.argv[1]))
+assert any(x['highsite_id']==sys.argv[2] and x['transition']=='down' for x in rows),rows
+PY
+api GET /notifications/outbox "" 200
+SITE_ALERT_COUNT="$(python3 - "$BASE/result.json" <<'PY'
+import json,sys
+print(sum(1 for x in json.load(open(sys.argv[1])) if x['subject']=='NetForge network alert'))
+PY
+)"
+api GET /monitor/events "" 200
+python3 - "$BASE/result.json" "$MONITOR_ID" <<'PY'
+import json,sys
+rows=json.load(open(sys.argv[1]))
+assert any(x['target_id']==sys.argv[2] and x['transition']=='down' and x['suppressed'] is True for x in rows),rows
+PY
+
+# The child monitor fails while the upstream is DOWN. Its event remains
+# queryable but must not create another operational email.
+api POST /monitor/targets "{\"nasId\":$LOOP_NAS,\"equipmentId\":null,\"name\":\"CI child access TCP\",\"tcpPort\":19093,\"enabled\":true,\"intervalSeconds\":300,\"failureThreshold\":2,\"confirm\":true}" 201
+CHILD_MONITOR="$(id)"
+api PUT "/monitor/targets/$CHILD_MONITOR/site" "{\"highsiteId\":\"$SITE\",\"isUpstream\":false,\"confirm\":true}" 200
+api POST "/monitor/targets/$CHILD_MONITOR/check" '{}' 200
+api POST "/monitor/targets/$CHILD_MONITOR/check" '{}' 200
+api GET /monitor/events "" 200
+python3 - "$BASE/result.json" "$CHILD_MONITOR" <<'PY'
+import json,sys
+rows=json.load(open(sys.argv[1]))
+assert any(x['target_id']==sys.argv[2] and x['transition']=='down' and x['suppressed'] is True for x in rows),rows
+PY
+api GET /notifications/outbox "" 200
+python3 - "$BASE/result.json" "$SITE_ALERT_COUNT" <<'PY'
+import json,sys
+rows=json.load(open(sys.argv[1]))
+alerts=sum(1 for x in rows if x['subject']=='NetForge network alert')
+assert alerts==int(sys.argv[2]),(alerts,sys.argv[2])
+PY
+
+# Device identity and credentials must never appear as unencrypted values
+# in staff listing results or the PostgreSQL ciphertext columns.
+api POST /snmp/devices '{"nasId":999999999,"equipmentId":null,"highsiteId":null,"name":"Invalid SNMP source","username":"CIv3","authProtocol":"SHA-256","authPassword":"CI-AuthSecret-Strong-2026","privacyPassword":"CI-PrivacySecret-Strong-2026","udpPort":161,"interfaceIndex":1,"intervalSeconds":300,"enabled":false,"confirm":false}' 409
+api POST /snmp/devices "{\"nasId\":$LOOP_NAS,\"equipmentId\":null,\"highsiteId\":\"$SITE\",\"name\":\"CI tower SNMP\",\"username\":\"CIv3\",\"authProtocol\":\"SHA-256\",\"authPassword\":\"CI-AuthSecret-Strong-2026\",\"privacyPassword\":\"CI-PrivacySecret-Strong-2026\",\"udpPort\":161,\"interfaceIndex\":1,\"intervalSeconds\":300,\"enabled\":false,\"confirm\":false}" 201
+SNMP_DEVICE="$(id)"
+api GET /snmp/devices "" 200
+python3 - "$BASE/result.json" "$SNMP_DEVICE" <<'PY'
+import json,sys
+text=open(sys.argv[1]).read()
+assert "CI-AuthSecret-Strong-2026" not in text
+assert "CI-PrivacySecret-Strong-2026" not in text
+assert "secret_ciphertext" not in text
+rows=json.loads(text)
+assert any(r['id']==sys.argv[2] and r['enabled'] is False for r in rows),rows
+PY
+api POST "/snmp/devices/$SNMP_DEVICE/poll" '{}' 200
+grep -q '"ok":false' "$BASE/result.json"
+api PUT "/snmp/devices/$SNMP_DEVICE" '{"enabled":true,"intervalSeconds":300,"interfaceIndex":1,"confirm":true}' 200
+
+for i in 1 2 3; do api POST "/snmp/devices/$SNMP_DEVICE/poll" '{}' 200; done
+api GET "/snmp/devices/$SNMP_DEVICE/history?hours=24" "" 200
+python3 - "$BASE/result.json" <<'PY'
+import json,sys
+rows=json.load(open(sys.argv[1]))
+assert len(rows)==3,rows
+assert rows[0]['input_bps'] is None and rows[0]['counter_reset'] is False,rows
+assert float(rows[1]['input_bps'])>0 and float(rows[1]['output_bps'])>0,rows
+assert rows[2]['counter_reset'] is True and rows[2]['input_bps'] is None,rows
+PY
+# The profile's USM credentials must be encrypted at rest. The DataProtection
+# key directory is persisted independently via the normal Docker key volume.
+PSQL="$PGCONTAINER"
+docker exec "$PSQL" psql -U netforge_ci -d netforge_ci -Atqc \
+  "SELECT position('CI-AuthSecret' in auth_secret_ciphertext),
+          position('CI-PrivacySecret' in priv_secret_ciphertext)
+   FROM snmp_devices WHERE id='$SNMP_DEVICE';" | grep -q '^0|0
+
+
+# Subsequent SNMPv3 IF-MIB status=2 polls trigger a three-failure DOWN.
+# Since upstream TCP is DOWN, this separate SNMP alert is suppressed.
+for i in 4 5 6; do api POST "/snmp/devices/$SNMP_DEVICE/poll" '{}' 200; done
+grep -q '"state":"down"' "$BASE/result.json"
+api GET /snmp/events "" 200
+python3 - "$BASE/result.json" "$SNMP_DEVICE" <<'PY'
+import json,sys
+rows=json.load(open(sys.argv[1]))
+assert any(r['device_id']==sys.argv[2] and r['transition']=='down' and r['suppressed'] is True for r in rows),rows
+PY
+
+# The upstream TCP service becomes reachable: emit ONE site recovery.
+python3 -m http.server 19092 --bind 127.0.0.1 > "$BASE/monitor-http-2.log" 2>&1 &
+MONITOR_PID="$!"
+sleep 0.35
+api POST "/monitor/targets/$MONITOR_ID/check" '{}' 200
+grep -q '"transition":"recovered"' "$BASE/result.json"
+api GET /monitor/site-events "" 200
+python3 - "$BASE/result.json" "$SITE" <<'PY'
+import json,sys
+rows=[r for r in json.load(open(sys.argv[1])) if r['highsite_id']==sys.argv[2]]
+assert len([r for r in rows if r['transition']=='down'])==1,rows
+assert len([r for r in rows if r['transition']=='recovered'])==1,rows
+PY
+api GET /monitor/sites "" 200
+python3 - "$BASE/result.json" "$SITE" <<'PY'
+import json,sys
+r=next(r for r in json.load(open(sys.argv[1])) if r['id']==sys.argv[2])
+assert int(r['upstream_down'])==0,r
+PY
+
+# The next SNMPv3 sample is healthy. It must record a non-suppressed
+# recovery event because no site upstream TCP monitor remains down.
+api POST "/snmp/devices/$SNMP_DEVICE/poll" '{}' 200
+grep -q '"state":"up"' "$BASE/result.json"
+api GET /snmp/events "" 200
+python3 - "$BASE/result.json" "$SNMP_DEVICE" <<'PY'
+import json,sys
+rows=json.load(open(sys.argv[1]))
+assert any(r['device_id']==sys.argv[2] and r['transition']=='recovered' and r['suppressed'] is False for r in rows),rows
+PY
+CODE="$(curl -sS -o "$BASE/result.json" -w '%{http_code}' \
+ -H "Cookie: $NEW_PORTAL_COOKIE" "$BASEURL/api/snmp/devices")"
+test "$CODE" = 401
+
+api PUT "/snmp/devices/$SNMP_DEVICE" '{"enabled":false,"intervalSeconds":300,"interfaceIndex":1,"confirm":false}' 200
+api PUT "/monitor/targets/$MONITOR_ID" '{"enabled":false,"intervalSeconds":300,"failureThreshold":2,"confirm":false}' 200
+api PUT "/monitor/targets/$CHILD_MONITOR" '{"enabled":false,"intervalSeconds":300,"failureThreshold":2,"confirm":false}' 200
+kill "$MONITOR_PID" 2>/dev/null || true
+MONITOR_PID=""
 api PUT /notifications/settings '{"customerInvoiceEmail":false,"opsEmail":false,"opsTelegram":false}' 200
 
 echo "NetForge .NET 11 / PostgreSQL API smoke passed."
