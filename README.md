@@ -31,6 +31,8 @@ selfhost/
     TelemetryRetention.cs
     NocIncidents.cs
     NocWorkflow.cs
+    AssuranceEvidence.cs
+    ServiceAssurance.cs
   db/
     001_init.sql
     002_radius_management.sql
@@ -41,6 +43,8 @@ selfhost/
     007_rf_telemetry_thresholds.sql
     008_snmp_interface_hourly.sql
     009_noc_incidents.sql
+    010_subscriber_assurance.sql
+    011_assurance_indexes_audit.sql
   radius/
     Dockerfile
     entrypoint.sh
@@ -51,6 +55,7 @@ selfhost/
     telemetry.js
     rf-console.js
     noc-console.js
+    assurance-console.js
     portal/
       index.html
       style.css
@@ -212,6 +217,29 @@ runbook](selfhost/NOC_OPERATIONS.md) before using it with live sites.
 - Incident data is restricted to NOC staff. No customer emails,
   notifications, billing adjustments or RADIUS operations are
   triggered by these new workflows.
+
+## Phase 9: Subscriber service assurance and conservative SLA evidence
+
+The **Service Assurance** staff module correlates NOC incident snapshots
+with RADIUS session-accounting observations and provides a separate,
+immutable ledger of staff-attested service interruptions.
+See the [service assurance deployment runbook](selfhost/SERVICE_ASSURANCE.md).
+
+- Incident opening captures PPPoE service membership and initial
+  RADIUS accounting evidence; NOC staff can refresh observations
+  without overwriting historical samples.
+- Session evidence distinguishes fresh accounting, stale updates,
+  recent stop records and missing data. **None proves actual
+  internet reachability or automatically creates downtime.**
+- Staff must explicitly attest each interruption's past time range
+  with a linked incident or CRM ticket and supporting explanation.
+  PostgreSQL rejects duplicate overlapping intervals.
+- Monthly internal reports show recorded downtime, RADIUS context,
+  a configurable notional availability target and an availability
+  **upper bound**. Every non-exceeded record is labeled **insufficient
+  evidence**, not SLA compliant; no customer credits are issued.
+- Staff can export an internal CSV; customer portal sessions cannot
+  access incident evidence or service-assurance reports.
 
 ## Current capabilities
 
