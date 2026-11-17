@@ -21,6 +21,7 @@ export NETFORGE_OPERATIONS_EMAIL="noc@example.test"
 # authPriv, protected configuration file permissions, and no secrets in argv.
 export NETFORGE_CI_SNMP_MOCK="$PWD/selfhost/tests/snmpget-mock.py"
 export NETFORGE_TEST_SNMP_COUNTER_FILE="$BASE/snmp-counter"
+export NETFORGE_TEST_RF_COUNTER_FILE="$BASE/rf-counter"
 cat >"$BASE/netforge-snmpget-ci" <<'SNMPWRAP'
 #!/usr/bin/env bash
 exec python3 "$NETFORGE_CI_SNMP_MOCK" "$@"
@@ -689,5 +690,8 @@ api PUT "/monitor/targets/$CHILD_MONITOR" '{"enabled":false,"intervalSeconds":30
 kill "$MONITOR_PID" 2>/dev/null || true
 MONITOR_PID=""
 api PUT /notifications/settings '{"customerInvoiceEmail":false,"opsEmail":false,"opsTelegram":false}' 200
+
+# Phase 7 extends existing lab profile and PostgreSQL fixture.
+source selfhost/tests/rf-smoke.sh
 
 echo "NetForge .NET 11 / PostgreSQL API smoke passed."
