@@ -119,7 +119,7 @@ function snmpConsole(el){
   d.querySelector('#close').onclick=()=>d.close();
   d.querySelector('#snmp-rotate').onsubmit=async e=>{
    e.preventDefault();
-   if(!confirm('Replace this SNMPv3 profile's credentials? Existing ones cannot be recovered.'))return;
+   if(!confirm('Replace the SNMPv3 profile credentials? Existing ones cannot be recovered.'))return;
    try{await api('/snmp/devices/'+record.id+'/credentials','PUT',{...Object.fromEntries(new FormData(e.target)),confirm:true});d.close();await draw();}
    catch(err){d.querySelector('#rotate-error').textContent=err.message}
   };
