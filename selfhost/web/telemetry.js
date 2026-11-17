@@ -105,12 +105,29 @@ function snmpConsole(el){
    await draw();
   }catch(err){error.textContent=err.message}
  };
- async function showHistory(id,name){
+ async function showHistory(id,name,mode='raw'){
   history.textContent='Loading samples for '+name+'…';
   try{
-   const records=await api('/snmp/devices/'+id+'/history?hours=168');
+   const hourly=mode==='hourly';
+   const records=await api(hourly?'/telemetry/interface-hourly/'+id+'?hours=2160':
+    '/snmp/devices/'+id+'/history?hours=168');
+   const plot=hourly?records.map(x=>({
+    observed_at:x.hour_start,input_bps:x.input_average_bps,
+    output_bps:x.output_average_bps
+   })):records;
    const recent=records.slice(-80).reverse();
-   history.innerHTML='<h3>'+esc(name)+' — last 7 days</h3>'+telemetryGraph(records)+'<p class="muted">Counter resets are excluded from bitrate calculations. SNMP input/output reflect the selected device interface and may not be the same as subscriber direction.</p><div class="tablewrap"><table><thead><tr><th>UTC sample</th><th>Interface state</th><th>Input Mbps</th><th>Output Mbps</th><th>Counter reset</th></tr></thead><tbody>'+recent.map(x=>'<tr><td>'+esc(x.observed_at)+'</td><td>'+esc(x.oper_status===1?'UP':'not UP ('+x.oper_status+')')+'</td><td>'+esc(x.input_bps===null?'—':(Number(x.input_bps)/1e6).toFixed(2))+'</td><td>'+esc(x.output_bps===null?'—':(Number(x.output_bps)/1e6).toFixed(2))+'</td><td>'+esc(x.counter_reset?'Yes':'No')+'</td></tr>').join('')+'</tbody></table></div>';
+   history.innerHTML='<h3>'+esc(name)+' — '+(hourly?'90-day hourly history':'last 7 days raw samples')+'</h3>'+
+    '<div class="buttons"><button id="snmp-raw">7-day samples</button><button id="snmp-hourly">90-day hourly average and peak</button></div>'+
+    telemetryGraph(plot)+
+    '<p class="muted">Interface input and output are device-relative. Counter resets exclude invalid bitrate intervals. Hourly rates show aggregate averages and peaks of valid recorded samples.</p>'+
+    '<div class="tablewrap"><table><thead><tr><th>UTC sample</th>'+
+    (hourly?'<th>Operational</th><th>Input avg Mbps</th><th>Input peak Mbps</th><th>Output avg Mbps</th><th>Output peak Mbps</th>':
+    '<th>Interface state</th><th>Input Mbps</th><th>Output Mbps</th><th>Counter reset</th>')+
+    '</tr></thead><tbody>'+
+    recent.map(x=>hourly?'<tr><td>'+esc(x.hour_start)+'</td><td>'+esc(x.operational_samples)+' / '+esc(x.samples)+'</td><td>'+esc(x.input_average_bps===null?'—':(Number(x.input_average_bps)/1e6).toFixed(2))+'</td><td>'+esc(x.input_peak_bps===null?'—':(Number(x.input_peak_bps)/1e6).toFixed(2))+'</td><td>'+esc(x.output_average_bps===null?'—':(Number(x.output_average_bps)/1e6).toFixed(2))+'</td><td>'+esc(x.output_peak_bps===null?'—':(Number(x.output_peak_bps)/1e6).toFixed(2))+'</td></tr>':
+    '<tr><td>'+esc(x.observed_at)+'</td><td>'+esc(x.oper_status===1?'UP':'not UP ('+x.oper_status+')')+'</td><td>'+esc(x.input_bps===null?'—':(Number(x.input_bps)/1e6).toFixed(2))+'</td><td>'+esc(x.output_bps===null?'—':(Number(x.output_bps)/1e6).toFixed(2))+'</td><td>'+esc(x.counter_reset?'Yes':'No')+'</td></tr>').join('')+'</tbody></table></div>';
+   history.querySelector('#snmp-raw').onclick=()=>showHistory(id,name,'raw');
+   history.querySelector('#snmp-hourly').onclick=()=>showHistory(id,name,'hourly');
   }catch(err){history.textContent=err.message}
  }
  async function rotateCredentials(record){
