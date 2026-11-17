@@ -693,5 +693,6 @@ api PUT /notifications/settings '{"customerInvoiceEmail":false,"opsEmail":false,
 
 # Phase 7 extends existing lab profile and PostgreSQL fixture.
 source selfhost/tests/rf-smoke.sh
+source selfhost/tests/noc-smoke.sh
 
 echo "NetForge .NET 11 / PostgreSQL API smoke passed."
