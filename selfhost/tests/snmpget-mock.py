@@ -34,6 +34,25 @@ for value in (
     if value not in contents:
         raise RuntimeError("SNMP configuration option missing")
 
+# Custom vendor OID mock responses are a separate read, and must not
+# alter the baseline IF-MIB counter stream or device-health state.
+oids = [arg for arg in arguments if arg.startswith(".1.")]
+if len(oids) != 4:
+    rf_counter = Path(os.environ["NETFORGE_TEST_RF_COUNTER_FILE"])
+    call = int(rf_counter.read_text()) + 1 if rf_counter.exists() else 1
+    rf_counter.write_text(str(call))
+    rssi = [-55, -70, -70, -80, -80, -60, -60]
+    cpu = [20, 75, 75, 91, 95, 30, 30]
+    values = {
+        ".1.3.6.1.4.1.424242.1.0": rssi[min(call-1, 6)] * 10,
+        ".1.3.6.1.4.1.424242.2.0": cpu[min(call-1, 6)],
+    }
+    if any(oid not in values for oid in oids):
+        sys.exit(1)
+    for oid in oids:
+        print(values[oid], flush=True)
+    sys.exit(0)
+
 counter_path = Path(os.environ["NETFORGE_TEST_SNMP_COUNTER_FILE"])
 number = int(counter_path.read_text()) + 1 if counter_path.exists() else 1
 counter_path.write_text(str(number))
