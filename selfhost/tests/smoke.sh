@@ -635,7 +635,7 @@ PSQL="$PGCONTAINER"
 docker exec "$PSQL" psql -U netforge_ci -d netforge_ci -Atqc \
   "SELECT position('CI-AuthSecret' in auth_secret_ciphertext),
           position('CI-PrivacySecret' in priv_secret_ciphertext)
-   FROM snmp_devices WHERE id='$SNMP_DEVICE';" | grep -q '^0|0
+   FROM snmp_devices WHERE id='$SNMP_DEVICE';" | python3 -c "import sys; assert sys.stdin.read().strip() == '0|0'"
 
 
 # Subsequent SNMPv3 IF-MIB status=2 polls trigger a three-failure DOWN.
