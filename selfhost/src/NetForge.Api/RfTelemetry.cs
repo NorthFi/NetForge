@@ -78,7 +78,7 @@ public static class RfTelemetry
                     p.severity,p.pending_severity,p.pending_count,p.last_value,
                     p.last_checked_at
                 FROM snmp_metric_profiles p JOIN snmp_devices d ON d.id=p.device_id
-                WHERE @device IS NULL OR p.device_id=@device
+                WHERE @device::uuid IS NULL OR p.device_id=@device
                 ORDER BY d.name,p.metric_key LIMIT 2000
                 """,P("device",deviceId)));
         });
