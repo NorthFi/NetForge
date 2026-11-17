@@ -27,13 +27,13 @@ SNMPCONFIG
 chmod 600 "$BASE/agent/snmpd.conf" "$BASE/state/snmpd.conf" "$BASE/client/snmp.conf"
 
 # Use isolated environment directories, not the host's system SNMP users.
-SNMPCONFPATH="$BASE/agent:$BASE/state" SNMP_PERSISTENT_DIR="$BASE/state" snmpd -f -Lo -c "$BASE/agent/snmpd.conf" > "$BASE/agent.log" 2>&1 &
+MIBS=: SNMPCONFPATH="$BASE/agent" SNMP_PERSISTENT_DIR="$BASE/state" snmpd -f -Lo > "$BASE/agent.log" 2>&1 &
 AGENT_PID="$!"
 ifIndex="$(cat /sys/class/net/lo/ifindex)"
 test "$ifIndex" -ge 1
 status=1
 for i in $(seq 1 25); do
-  if SNMPCONFPATH="$BASE/client" SNMP_PERSISTENT_DIR="$BASE/client"      snmpget -v 3 -l authPriv -u ciSNMPv3 -a SHA-256 -x AES -t 1 -r 0 -Oqv       'udp:127.0.0.1:1161'       '.1.3.6.1.2.1.1.3.0'       ".1.3.6.1.2.1.2.2.1.8.$ifIndex"       ".1.3.6.1.2.1.31.1.1.1.6.$ifIndex"       ".1.3.6.1.2.1.31.1.1.1.10.$ifIndex"       > "$BASE/response" 2> "$BASE/client.err"; then
+  if MIBS=: SNMPCONFPATH="$BASE/client" SNMP_PERSISTENT_DIR="$BASE/client"      snmpget -v 3 -l authPriv -u ciSNMPv3 -a SHA-256 -x AES -t 1 -r 0 -Oqv       'udp:127.0.0.1:1161'       '.1.3.6.1.2.1.1.3.0'       ".1.3.6.1.2.1.2.2.1.8.$ifIndex"       ".1.3.6.1.2.1.31.1.1.1.6.$ifIndex"       ".1.3.6.1.2.1.31.1.1.1.10.$ifIndex"       > "$BASE/response" 2> "$BASE/client.err"; then
     status=0; break
   fi
   sleep 0.2
@@ -42,7 +42,7 @@ if [[ "$status" -ne 0 ]]; then
   echo "SNMPv3 authPriv agent test failed. Inspect local runner SNMP configuration." >&2
   tail -n 12 "$BASE/client.err" | sed -E 's/(CI-AuthSecret|CI-PrivacySecret)[^ ]*/REDACTED/g' >&2
   echo "SNMP agent recent log:" >&2
-  tail -n 30 "$BASE/agent.log" | sed -E 's/(CI-AuthSecret|CI-PrivacySecret)[^ ]*/REDACTED/g' >&2
+  grep -Ev 'Cannot adopt OID' "$BASE/agent.log" | tail -n 35 | sed -E 's/(CI-AuthSecret|CI-PrivacySecret)[^ ]*/REDACTED/g' >&2 || true
   exit 1
 fi
 python3 - "$BASE/response" <<'PY'
