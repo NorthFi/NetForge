@@ -37,9 +37,11 @@ public static class AssuranceEvidence
     // current PostgreSQL snapshot, avoiding per-subscriber query storms.
     // Recent activity means a fresh Acct-Interim-Update or Acct-Start,
     // not verified payload forwarding or internet availability.
-    internal static Task<int> Capture(NpgsqlConnection conn,NpgsqlTransaction tx,
-        Guid incidentId)=>
-        NetworkManagement.Execute(conn,tx,"""
+    internal static async Task<int> Capture(NpgsqlConnection conn,NpgsqlTransaction tx,
+        Guid incidentId)
+    {
+        var rows=await NetworkManagement.Query(conn,tx,"""
+            WITH captured AS (
             INSERT INTO assurance_session_observations(
                 incident_id,service_id,state,open_sessions,recent_open_sessions,
                 last_accounting_at,last_session_stop_at,stop_reason)
@@ -73,7 +75,12 @@ public static class AssuranceEvidence
                 ORDER BY r.acctstoptime DESC,r.radacctid DESC LIMIT 1
             ) stopped ON true
             WHERE membership.incident_id=@incident
+            RETURNING 1
+            )
+            SELECT count(*) AS total FROM captured
             """,P("incident",incidentId));
+        return checked((int)(long)rows.Single()["total"]!);
+    }
 
     public static void Map(RouteGroupBuilder api)
     {
