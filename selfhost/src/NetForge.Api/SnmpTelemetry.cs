@@ -99,7 +99,7 @@ public static class SnmpTelemetry
                 VALUES(@id,@equipment,@nas,@site,@name,@username,@protocol,
                     @auth,@privacy,@port,@interface,@interval,@enabled)
                 """,P("id",id),P("equipment",input.EquipmentId),P("nas",input.NasId),
-                P("site",input.HighsiteId),P("name",input.Name.Trim()),
+                P("site",input.HighsiteId),P("name",input.Name!.Trim()),
                 P("username",input.Username),P("protocol",input.AuthProtocol),
                 P("auth",cipher.Protect(input.AuthPassword)),
                 P("privacy",cipher.Protect(input.PrivacyPassword)),
@@ -239,7 +239,7 @@ public static class SnmpTelemetry
             "netforge-snmp-"+Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         if(!OperatingSystem.IsWindows())
-            Directory.SetUnixFileMode(directory,UnixFileMode.UserRead|
+            File.SetUnixFileMode(directory,UnixFileMode.UserRead|
                 UnixFileMode.UserWrite|UnixFileMode.UserExecute);
         try
         {
