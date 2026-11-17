@@ -44,6 +44,7 @@ builder.Services.AddHostedService<BillingEnforcementWorker>();
 builder.Services.AddHostedService<MonthlyBillingWorker>();
 builder.Services.AddHostedService<NotificationWorker>();
 builder.Services.AddHostedService<MonitoringWorker>();
+builder.Services.AddHostedService<SnmpTelemetryWorker>();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
@@ -161,6 +162,8 @@ FinancialAccounting.Map(authorized);
 BillingScheduler.Map(authorized);
 Notifications.Map(authorized);
 NetworkMonitoring.Map(authorized);
+SiteImpact.Map(authorized);
+SnmpTelemetry.Map(authorized);
 UsageAccounting.MapStaff(authorized);
 CustomerPortal.MapPortal(app);
 app.MapFallbackToFile("index.html");

@@ -13,6 +13,10 @@ WORKDIR /src/selfhost/src/NetForge.Api
 RUN dotnet publish NetForge.Api.csproj -c Release -o /app/publish --no-restore
 
 FROM mcr.microsoft.com/dotnet/aspnet:11.0
+# Net-SNMP CLI supplies mature SNMPv3 authPriv cryptography. Passwords are
+# provided only through temporary 0700 snmp.conf files, never process args.
+RUN apt-get update && apt-get install -y --no-install-recommends snmp \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080
 COPY --from=build /app/publish .
