@@ -43,6 +43,9 @@ public static class NocIncidents
               sectors_snapshot=(SELECT count(*) FROM sectors WHERE highsite_id=@site)
             WHERE id=@incident
             """,P("incident",incident),P("site",highsite));
+        // Capture RADIUS signals at incident creation in the same transaction.
+        // These session observations are not verified subscriber downtime.
+        await AssuranceEvidence.SnapshotIncident(conn,tx,incident);
     }
 
     // Called inside SiteImpact's serializable-by-site transaction. A second

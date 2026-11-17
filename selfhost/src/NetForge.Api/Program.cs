@@ -165,6 +165,7 @@ Notifications.Map(authorized);
 NetworkMonitoring.Map(authorized);
 SiteImpact.Map(authorized);
 NocIncidents.Map(authorized);
+ServiceAssurance.Map(authorized);
 SnmpTelemetry.Map(authorized);
 RfTelemetry.Map(authorized);
 TelemetryRetention.Map(authorized);
