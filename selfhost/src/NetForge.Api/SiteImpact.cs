@@ -177,6 +177,8 @@ public static class SiteImpact
                 P("customers",countCustomers),P("sectors",countSectors),
                 P("detail","Tagged upstream TCP service "+monitorName+" "+transition));
             var siteEventId=(Guid)siteEvent.Single()["id"]!;
+            await NocIncidents.OnUpstreamTransition(conn,tx,siteEventId,
+                highsite.Value,(string)snapshot["name"]!,transition,monitorName);
             await Notifications.EnqueueMonitorEvent(conn,tx,siteEventId,
                 "Potential highsite upstream "+(transition=="down"?"OUTAGE":"RECOVERY")+
                 ": "+snapshot["name"]+". Active customers potentially affected: "+
