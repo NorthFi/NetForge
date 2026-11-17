@@ -235,6 +235,26 @@ public static class SnmpTelemetry
         int port,int ifIndex,string username,string protocol,string auth,string privacy,
         CancellationToken cancellation)
     {
+        var values=await QueryNetSnmpValues(fileName,ip,port,new[]{
+            ".1.3.6.1.2.1.1.3.0",
+            ".1.3.6.1.2.1.2.2.1.8."+ifIndex,
+            ".1.3.6.1.2.1.31.1.1.1.6."+ifIndex,
+            ".1.3.6.1.2.1.31.1.1.1.10."+ifIndex
+        },username,protocol,auth,privacy,cancellation);
+        var ticks=ParsePositive(values[0]);
+        var status=ParsePositive(values[1]);
+        var input=ParseDecimal(values[2]);
+        var outputBytes=ParseDecimal(values[3]);
+        if(ticks>uint.MaxValue || status is < 1 or > 7 ||
+           input>ulong.MaxValue || outputBytes>ulong.MaxValue)
+            throw new InvalidOperationException("SNMP counter value outside supported range");
+        return new SnmpReading(ticks,(int)status,input,outputBytes);
+    }
+
+    internal static async Task<string[]> QueryNetSnmpValues(string fileName,IPAddress ip,
+        int port,IReadOnlyList<string> oids,string username,string protocol,string auth,string privacy,
+        CancellationToken cancellation)
+    {
         var directory=Path.Combine(Path.GetTempPath(),
             "netforge-snmp-"+Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -277,12 +297,12 @@ public static class SnmpTelemetry
             foreach(var arg in new[]{
                 "-v","3","-l","authPriv","-u",username,
                 "-a",protocol,"-x","AES","-t","2","-r","0","-Oqv",
-                "udp:"+ip+":"+port,
-                ".1.3.6.1.2.1.1.3.0",
-                ".1.3.6.1.2.1.2.2.1.8."+ifIndex,
-                ".1.3.6.1.2.1.31.1.1.1.6."+ifIndex,
-                ".1.3.6.1.2.1.31.1.1.1.10."+ifIndex
+                "udp:"+ip+":"+port
             })psi.ArgumentList.Add(arg);
+            // OIDs have already been validated as numeric-only. No shell
+            // expansion, MIB string resolution or executable arguments with
+            // credential values are ever used.
+            foreach(var oid in oids)psi.ArgumentList.Add(oid);
 
             using var process=new Process{StartInfo=psi};
             try
@@ -306,15 +326,9 @@ public static class SnmpTelemetry
                     throw new InvalidOperationException("SNMPv3 request failed");
                 var values=output.Split('\n',StringSplitOptions.TrimEntries|
                     StringSplitOptions.RemoveEmptyEntries);
-                if(values.Length!=4)throw new InvalidOperationException("Malformed SNMP response");
-                var ticks=ParsePositive(values[0]);
-                var status=ParsePositive(values[1]);
-                var input=ParseDecimal(values[2]);
-                var outputBytes=ParseDecimal(values[3]);
-                if(ticks>uint.MaxValue || status is < 1 or > 7 ||
-                   input>ulong.MaxValue || outputBytes>ulong.MaxValue)
-                    throw new InvalidOperationException("SNMP counter value outside supported range");
-                return new SnmpReading(ticks,(int)status,input,outputBytes);
+                if(values.Length!=oids.Count)
+                    throw new InvalidOperationException("SNMP response did not contain the requested values");
+                return values;
             }
             catch(OperationCanceledException) when(!cancellation.IsCancellationRequested)
             {
@@ -416,6 +430,15 @@ public static class SnmpTelemetry
         var next=success?"up":nextFailures>=3?"down":oldState;
         if(sample is not null)
         {
+            // Additional device-specific telemetry has independent failure
+            // handling. An invalid RF vendor OID must not mark the base IF-MIB
+            // monitor DOWN or corrupt its standard counters.
+            await RfTelemetry.PollProfiles(conn,(NpgsqlTransaction)tx,config,
+                deviceId,ip,(int)row["udp_port"]!,row["highsite_id"] as Guid?,
+                (string)row["name"]!,row["username"] as string ?? "",
+                (string)row["auth_protocol"]!,provider,
+                (string)row["auth_secret_ciphertext"]!,
+                (string)row["priv_secret_ciphertext"]!,cancellation);
             var previous=await NetworkManagement.Query(conn,(NpgsqlTransaction)tx,"""
                 SELECT observed_at,uptime_ticks,input_octets,output_octets
                 FROM snmp_samples WHERE device_id=@id
