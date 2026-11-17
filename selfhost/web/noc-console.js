@@ -68,6 +68,8 @@ function nocTicketLink(incident,after){
    await api('/noc/incidents/'+incident.id+'/ticket','POST',{
     ticketId:values.ticketId||null,subject:values.subject,
     description:values.description,confirm:true});
+   // Keep the CRM ticket listing consistent without requiring a page reload.
+   data.tickets=await api('/tickets');
    d.close();await after();
   }catch(error){d.querySelector('#noc-ticket-error').textContent=error.message}
  };
