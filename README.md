@@ -29,6 +29,8 @@ selfhost/
     SnmpTelemetry.cs
     RfTelemetry.cs
     TelemetryRetention.cs
+    NocIncidents.cs
+    NocWorkflow.cs
   db/
     001_init.sql
     002_radius_management.sql
@@ -38,6 +40,7 @@ selfhost/
     006_wisp_telemetry.sql
     007_rf_telemetry_thresholds.sql
     008_snmp_interface_hourly.sql
+    009_noc_incidents.sql
   radius/
     Dockerfile
     entrypoint.sh
@@ -47,6 +50,7 @@ selfhost/
     app.js
     telemetry.js
     rf-console.js
+    noc-console.js
     portal/
       index.html
       style.css
@@ -187,6 +191,27 @@ any device OID or cleanup job.
 - Individual SNMPv3 profiles and OID mappings are still opt-in and
   subject to vendor-model/firmware acceptance tests; this is read-only
   monitoring, not a radio or router configuration manager.
+
+## Phase 8: NOC incident operations
+
+The **NOC Incidents** staff module converts explicitly tagged highsite
+upstream TCP transitions into a persistent, auditable, deduplicated
+incident lifecycle. Review the [NOC workflow and deployment
+runbook](selfhost/NOC_OPERATIONS.md) before using it with live sites.
+
+- Automatic incidents are grounded in site-level upstream monitoring;
+  counts of potentially exposed customers/sectors are snapshotted at
+  detection time. They are **not evidence of actual disconnection**.
+- Staff can acknowledge, assign, document, link/create highsite CRM
+  support tickets and explicitly resolve incidents after recovery.
+- Site recovery enters **monitoring**, never silently resolves the
+  ticket. Repeat failures reopen the same unresolved incident.
+- Confirmed manual site incidents cover reports not detected by TCP
+  checks; cross-site ticket links and duplicate unresolved incidents
+  are rejected by transactional database rules.
+- Incident data is restricted to NOC staff. No customer emails,
+  notifications, billing adjustments or RADIUS operations are
+  triggered by these new workflows.
 
 ## Current capabilities
 
