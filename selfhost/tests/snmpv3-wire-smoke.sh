@@ -27,7 +27,7 @@ SNMPCONFIG
 chmod 600 "$BASE/agent/snmpd.conf" "$BASE/state/snmpd.conf" "$BASE/client/snmp.conf"
 
 # Use isolated environment directories, not the host's system SNMP users.
-MIBS=: SNMPCONFPATH="$BASE/agent" SNMP_PERSISTENT_DIR="$BASE/state" snmpd -f -Lo > "$BASE/agent.log" 2>&1 &
+MIBS=: SNMPCONFPATH="$BASE/agent" SNMP_PERSISTENT_DIR="$BASE/state" SNMP_PERSISTENT_FILE="$BASE/state/snmpd.conf" snmpd -f -Lo > "$BASE/agent.log" 2>&1 &
 AGENT_PID="$!"
 ifIndex="$(cat /sys/class/net/lo/ifindex)"
 test "$ifIndex" -ge 1
