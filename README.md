@@ -27,6 +27,8 @@ selfhost/
     NetworkMonitoring.cs
     SiteImpact.cs
     SnmpTelemetry.cs
+    RfTelemetry.cs
+    TelemetryRetention.cs
   db/
     001_init.sql
     002_radius_management.sql
@@ -34,6 +36,8 @@ selfhost/
     004_financial_ledger_reconciliation.sql
     005_operations_automation.sql
     006_wisp_telemetry.sql
+    007_rf_telemetry_thresholds.sql
+    008_snmp_interface_hourly.sql
   radius/
     Dockerfile
     entrypoint.sh
@@ -42,6 +46,7 @@ selfhost/
     style.css
     app.js
     telemetry.js
+    rf-console.js
     portal/
       index.html
       style.css
@@ -161,6 +166,28 @@ existing TCP Network Monitoring module. See
 - **New SNMP polling is disabled by default.** This is not ICMP,
   SNMPv2c, traffic flow analysis, a full RF graph or an OLT/ACS controller.
 
+## Phase 7: Vendor-specific RF metrics and safe retention
+
+NetForge now includes **RF Metrics** and **Telemetry Retention** in the
+self-hosted CRM. Review the
+[RF telemetry and retention runbook](selfhost/RF_METRICS.md) before enabling
+any device OID or cleanup job.
+
+- Operators assign verified numeric SNMPv3 OIDs for vendor-specific RSSI,
+  CCQ, SNR, noise floor, capacity, CPU, memory, power, temperature and
+  frequency. NetForge does **not** ship speculative vendor MIB OIDs.
+- Per-metric multipliers and offsets normalize raw device measurements
+  to the selected displayed units, with raw and scaled history saved.
+- Warning/critical threshold policy supports above/below direction,
+  consecutive-sample debounce, recovery hysteresis, and optional alert
+  suppression during a tagged highsite upstream outage.
+- Hourly minimum/maximum/average summaries extend RF and IF-MIB interface
+  capacity trending; 6-hourly retention with bounded deletes is
+  **disabled by default** until approved by an administrator.
+- Individual SNMPv3 profiles and OID mappings are still opt-in and
+  subject to vendor-model/firmware acceptance tests; this is read-only
+  monitoring, not a radio or router configuration manager.
+
 ## Current capabilities
 
 - Staff login with PBKDF2 password hashes, cookie authentication, role checks and request CSRF tokens.
@@ -196,7 +223,7 @@ Set `Database__ConnectionString`, `NETFORGE_ADMIN_USER`, `NETFORGE_ADMIN_PASSWOR
 
 ## Current gaps versus full Splynx functionality
 
-Do **not** assume this is complete Splynx functionality. Missing major components include multi-factor authentication, payment gateways and automatic bank feeds, VAT-compliant invoicing and proration, refunds and prepaid vouchers, usage-based rating, true live-session CoA speed changes, NAS configuration automation, TR-069/USP ACS, ICMP, vendor-specific SNMP CPU/memory/RF telemetry, telemetry retention/rollups, notification templates and confirmed external delivery, scoped API tokens, backup/restore UI, VoIP CDR billing, technician dispatch, procurement, contracts, granular RBAC, multi-tenant isolation, and high availability.
+Do **not** assume this is complete Splynx functionality. Missing major components include multi-factor authentication, payment gateways and automatic bank feeds, VAT-compliant invoicing and proration, refunds and prepaid vouchers, usage-based rating, true live-session CoA speed changes, NAS configuration automation, TR-069/USP ACS, ICMP, automatic validated vendor MIB packs, telemetry partitioning/rollup optimization, notification templates and confirmed external delivery, scoped API tokens, backup/restore UI, VoIP CDR billing, technician dispatch, procurement, contracts, granular RBAC, multi-tenant isolation, and high availability.
 
 This branch **intentionally excludes the RF link planner**. It retains basic WISP highsite/sector/subscriber relationships and equipment records.
 
