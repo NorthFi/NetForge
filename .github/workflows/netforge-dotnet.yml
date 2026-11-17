@@ -55,3 +55,9 @@ jobs:
         run: bash selfhost/tests/billing-upgrade-smoke.sh
       - name: Build and exercise FreeRADIUS with PostgreSQL-backed subscriber
         run: bash selfhost/tests/radius-smoke.sh
+      - name: Install Net-SNMP CLI and test agent
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq snmp snmpd
+      - name: Validate real SNMPv3 SHA-256/AES polling
+        run: bash selfhost/tests/snmpv3-wire-smoke.sh
