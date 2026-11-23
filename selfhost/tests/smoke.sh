@@ -695,5 +695,6 @@ api PUT /notifications/settings '{"customerInvoiceEmail":false,"opsEmail":false,
 source selfhost/tests/rf-smoke.sh
 source selfhost/tests/noc-smoke.sh
 source selfhost/tests/assurance-smoke.sh
+source selfhost/tests/sla-probes-smoke.sh
 
 echo "NetForge .NET 11 / PostgreSQL API smoke passed."
