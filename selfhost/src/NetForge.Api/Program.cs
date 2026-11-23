@@ -44,6 +44,7 @@ builder.Services.AddHostedService<BillingEnforcementWorker>();
 builder.Services.AddHostedService<MonthlyBillingWorker>();
 builder.Services.AddHostedService<NotificationWorker>();
 builder.Services.AddHostedService<MonitoringWorker>();
+builder.Services.AddHostedService<AssuranceCpeProbeWorker>();
 builder.Services.AddHostedService<SnmpTelemetryWorker>();
 builder.Services.AddHostedService<TelemetryRetentionWorker>();
 builder.Services.AddRateLimiter(options =>
@@ -166,6 +167,8 @@ NetworkMonitoring.Map(authorized);
 SiteImpact.Map(authorized);
 NocIncidents.Map(authorized);
 ServiceAssurance.Map(authorized);
+AssuranceAgreements.Map(authorized);
+AssuranceCpeProbes.Map(authorized);
 SnmpTelemetry.Map(authorized);
 RfTelemetry.Map(authorized);
 TelemetryRetention.Map(authorized);
