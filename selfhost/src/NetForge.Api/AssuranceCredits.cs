@@ -201,7 +201,7 @@ public static class AssuranceCredits
             var credited=(decimal)refreshed.Single()["credited"]!;
             await NetworkManagement.Execute(conn,(NpgsqlTransaction)tx,
                 "UPDATE invoices SET status=@status WHERE id=@id",
-                P("id",remaining==0?(credited>0?"settled":"paid"):"issued"));
+                P("status",remaining==0?(credited>0?"settled":"paid"):"issued"),P("id",invoiceId));
             await NetworkManagement.Execute(conn,(NpgsqlTransaction)tx,"""
                 UPDATE assurance_credit_requests
                 SET status='posted',posted_by=@actor,posted_at=now(),credit_note_id=@credit
