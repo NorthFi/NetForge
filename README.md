@@ -33,6 +33,9 @@ selfhost/
     NocWorkflow.cs
     AssuranceEvidence.cs
     ServiceAssurance.cs
+    AssuranceAgreements.cs
+    AssuranceCredits.cs
+    AssuranceCpeProbes.cs
   db/
     001_init.sql
     002_radius_management.sql
@@ -45,6 +48,7 @@ selfhost/
     009_noc_incidents.sql
     010_subscriber_assurance.sql
     011_assurance_indexes_audit.sql
+    012_sla_credits_cpe_probes.sql
   radius/
     Dockerfile
     entrypoint.sh
@@ -56,6 +60,7 @@ selfhost/
     rf-console.js
     noc-console.js
     assurance-console.js
+    assurance-controls.js
     portal/
       index.html
       style.css
@@ -240,6 +245,26 @@ See the [service assurance deployment runbook](selfhost/SERVICE_ASSURANCE.md).
   evidence**, not SLA compliant; no customer credits are issued.
 - Staff can export an internal CSV; customer portal sessions cannot
   access incident evidence or service-assurance reports.
+
+## Phase 10: versioned SLA terms, approved credits and CPE checks
+
+NetForge now includes **SLA Credits** and **CPE Reachability** staff
+modules. Review the [SLA approval and CPE management runbook](selfhost/SLA_CREDIT_CPE.md).
+
+- Immutable effective-dated service SLA versions with internal
+  availability targets, documented references and per-invoice
+  maximum credit percentages.
+- Reviewed credit proposals require a linked staff-attested
+  interruption, matching service and invoice, and a distinct
+  administrator approval before an explicitly confirmed
+  double-entry credit-note posting. Posting is idempotent.
+- Opt-in management-plane TCP checks against inventoried,
+  customer-owned CPE/router addresses with bounded timeouts,
+  debounced state and historical samples. These are not
+  subscriber-originated Internet reachability tests and cannot
+  automatically create outage minutes.
+- New checks default **OFF**. No automated SLA refunds, cash
+  transfers, customer notifications or RADIUS changes.
 
 ## Current capabilities
 
