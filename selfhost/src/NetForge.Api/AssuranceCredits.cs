@@ -162,7 +162,7 @@ public static class AssuranceCredits
                 """,P("id",id));
             if(rows.Count==0)return Results.NotFound();
             var request=rows.Single();
-            if((string)request["status"]!=="posted")
+            if((string)request["status"]! == "posted")
                 return Results.Ok(new{ok=true,status="posted",creditNoteId=request["credit_note_id"],
                     replayed=true,note="Previously posted; no additional financial entry was created."});
             if((string)request["status"]! != "approved" ||
