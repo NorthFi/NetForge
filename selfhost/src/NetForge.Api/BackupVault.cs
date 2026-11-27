@@ -112,9 +112,9 @@ public static class BackupVault
             if(bytes is null)return Conflict("Backup integrity or encryption key validation failed");
             await Store.Audit(db,Actor(ctx),"backup-download","backup_version",version.ToString());
             ctx.Response.Headers.CacheControl="no-store";
-            ctx.Response.Headers.XContentTypeOptions="nosniff";
+            ctx.Response.Headers["X-Content-Type-Options"]="nosniff";
             return Results.File(bytes,"application/octet-stream",(string)row["filename"]!);
-        });
+        }).RequireRateLimiting("backup-upload");
         api.MapGet("/backups/profiles/{id:guid}/compare",async(Guid id,Guid older,Guid newer,
             HttpContext ctx,NpgsqlDataSource db,IDataProtectionProvider dp)=>
         {
@@ -128,8 +128,13 @@ public static class BackupVault
             if(x is null||y is null)return Conflict("Backup integrity or encryption key validation failed");
             // Bounded, order-aware contiguous changed range, not a minimal
             // edit script. Preserve ordering because RouterOS rule order matters.
-            var left=StrictUtf8.GetString(x).Replace("\r\n","\n").Split('\n');
-            var right=StrictUtf8.GetString(y).Replace("\r\n","\n").Split('\n');
+            var leftText=StrictUtf8.GetString(x).Replace("\r\n","\n");
+            var rightText=StrictUtf8.GetString(y).Replace("\r\n","\n");
+            // A newline-only payload must not allocate millions of array slots.
+            if(leftText.Count(ch=>ch=='\n')>100000||rightText.Count(ch=>ch=='\n')>100000)
+                return Invalid("Comparison limited to 100001 lines; download original files instead");
+            var left=leftText.Split('\n');
+            var right=rightText.Split('\n');
             var prefix=0;while(prefix<left.Length&&prefix<right.Length&&left[prefix]==right[prefix])prefix++;
             var suffix=0;while(suffix<left.Length-prefix&&suffix<right.Length-prefix&&
                 left[left.Length-1-suffix]==right[right.Length-1-suffix])suffix++;
@@ -142,7 +147,7 @@ public static class BackupVault
                 olderChangedLines=removed,newerChangedLines=added,
                 olderPreview=Preview(left,prefix,removed),newerPreview=Preview(right,prefix,added),
                 truncated=removed>200||added>200});
-        });
+        }).RequireRateLimiting("backup-upload");
     }
 
     private static Task<List<Dictionary<string,object?>>> Load(NpgsqlDataSource db,Guid profile,Guid version)=>

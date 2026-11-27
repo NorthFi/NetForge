@@ -26,10 +26,20 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 def read_file(path):
-    with open(path, "rb") as source:
-        if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+    # Reject symlinks and special files before any blocking read. The vendor
+    # producer should use atomic rename; a changed file is rejected, not stored.
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as source:
+        before = os.fstat(source.fileno())
+        if not stat.S_ISREG(before.st_mode):
             raise ValueError("backup source must be a regular file")
+        if not 0 < before.st_size <= MAX_BYTES:
+            raise ValueError("backup outside size limit")
         data = source.read(MAX_BYTES + 1)
+        after = os.fstat(source.fileno())
+        if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            raise ValueError("backup changed while being read")
     if not 0 < len(data) <= MAX_BYTES:
         raise ValueError("backup outside size limit")
     return data

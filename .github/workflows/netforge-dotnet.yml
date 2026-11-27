@@ -75,6 +75,8 @@ jobs:
           bash -n selfhost/tests/radius-smoke.sh
       - name: Validate subscriber probe agent TLS and timeout behavior
         run: python3 selfhost/tests/test_probe_agent.py
+      - name: Validate backup collector file and HTTPS safety
+        run: python3 selfhost/tests/test_backup_agent.py
       - name: Install Net-SNMP CLI and test agent
         run: |
           sudo apt-get update -qq

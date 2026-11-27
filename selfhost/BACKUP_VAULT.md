@@ -16,7 +16,9 @@ Uploads are limited to 4 MiB each and 100 versions per profile, with no
 automatic deletion; monitor capacity. Identical latest content of the same
 kind is deduplicated. Text comparison shows the order-sensitive contiguous
 changed range, not a minimal diff; line endings are normalized for preview
-only. Original bytes are preserved. No restore is performed by NetForge.
+only. Original bytes are preserved. Comparison is capped at 100001 lines.
+RouterOS export timestamps can change the byte hash even when the configuration
+is unchanged; deduplication does not strip headers or normalize file bytes. No restore is performed by NetForge.
 
 ## Collector deployment (Linux)
 

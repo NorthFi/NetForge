@@ -40,6 +40,11 @@ collector_upload(){
  test "$code" = "$expected" || { cat "$BASE/result.json"; return 1; }
 }
 collector_upload 200
+printf '/system identity\nset name=CI-Vault-Collector\n' > "$BASE/changed.rsc"
+collector_upload 429
+docker exec "$PGCONTAINER" psql -U netforge_ci -d netforge_ci -v ON_ERROR_STOP=1 -c \
+ "UPDATE backup_profiles SET last_received_at=now()-interval '61 seconds' WHERE id='$VAULT'" >/dev/null
+collector_upload 201
 api POST "/backups/profiles/$VAULT/token" '{"enable":false,"confirm":true}' 200
 collector_upload 401
 api GET /backups/profiles "" 200
