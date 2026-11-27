@@ -708,5 +708,6 @@ source selfhost/tests/backup-smoke.sh
 source selfhost/tests/network-changes-smoke.sh
 source selfhost/tests/network-execution-smoke.sh
 source selfhost/tests/compliance-smoke.sh
+source selfhost/tests/sales-smoke.sh
 
 echo "NetForge .NET 11 / PostgreSQL API smoke passed."
