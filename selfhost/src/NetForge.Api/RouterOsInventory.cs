@@ -163,13 +163,26 @@ public static class RouterOsInventory
         api.MapPost("/routeros/devices/{id:guid}/poll",Poll).RequireRateLimiting("routeros-read");
     }
 
+    private static readonly SemaphoreSlim PollSlots=new(4,4);
     private static async Task<IResult> Poll(Guid id,HttpContext ctx,NpgsqlDataSource db,
         IDataProtectionProvider dp,IConfiguration config,RouterOsPoll input)
     {
         if(!Admin(ctx))return Denied();
         if(!input.Confirm)return Invalid("Confirm read-only inspection of this enrolled router");
-        await using var conn=await db.OpenConnectionAsync(ctx.RequestAborted);
-        await using var tx=await conn.BeginTransactionAsync(ctx.RequestAborted);
+        return await PollCore(id,db,dp,config,Actor(ctx),ctx.RequestAborted,false);
+    }
+    internal static async Task<IResult> PollCore(Guid id,NpgsqlDataSource db,IDataProtectionProvider dp,
+        IConfiguration config,string actor,CancellationToken token,bool scheduled)
+    {
+        if(!await PollSlots.WaitAsync(0,token))return Results.StatusCode(429);
+        try{return await Inspect(id,db,dp,config,actor,token,scheduled);}
+        finally{PollSlots.Release();}
+    }
+    private static async Task<IResult> Inspect(Guid id,NpgsqlDataSource db,IDataProtectionProvider dp,
+        IConfiguration config,string actor,CancellationToken token,bool scheduled)
+    {
+        await using var conn=await db.OpenConnectionAsync(token);
+        await using var tx=await conn.BeginTransactionAsync(token);
         // Hold one row lock for a bounded poll. Other polls fail fast instead
         // of queuing. Disable/rotate waits until the in-flight request finishes.
         var rows=await NetworkManagement.Query(conn,tx,"""
@@ -182,15 +195,32 @@ public static class RouterOsInventory
             """,P("id",id));
         if(rows.Count==0)return Conflict("Device not found or inspection already running");
         var row=rows.Single();
+        if(scheduled)
+        {
+            // Advance due time only while holding the device lock. This
+            // prevents competing workers from polling the same due item.
+            var due=await NetworkManagement.Query(conn,tx,"""
+                UPDATE routeros_compliance_policies SET next_poll_at=now()+make_interval(mins=>poll_interval_minutes)
+                WHERE device_id=@id AND poll_interval_minutes>0 AND next_poll_at<=now()
+                RETURNING device_id
+                """,P("id",id));
+            if(due.Count!=1)return Conflict("Inspection is not due");
+        }
         var address=(string)row["address"]!;
         var port=(int)row["port"]!;
         if(row["enabled"] is not true || row["current_address"] as string!=address ||
             !Allowed(config,address,port))
+        {
+            if(scheduled)await tx.CommitAsync();
             return Conflict("Device disabled, inventory address changed, or server allowlist denied access");
+        }
         if(row["last_poll_at"] is DateTime previous && previous>DateTime.UtcNow.AddSeconds(-60))
+        {
+            if(scheduled)await tx.CommitAsync();
             return Results.Problem("Wait 60 seconds between inspection attempts",statusCode:429);
+        }
         var result=new Dictionary<string,RouterOsRead>(StringComparer.Ordinal);
-        using var budget=CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted);
+        using var budget=CancellationTokenSource.CreateLinkedTokenSource(token);
         budget.CancelAfter(TimeSpan.FromSeconds(25));
         try
         {
@@ -230,7 +260,7 @@ public static class RouterOsInventory
             WHERE id=@id
             """,P("snapshot",JsonSerializer.Serialize(result,new JsonSerializerOptions(JsonSerializerDefaults.Web))),
             P("status",status),P("id",id));
-        await NetworkManagement.Audit(conn,tx,Actor(ctx),"routeros-inspect:"+status,"routeros_device",id.ToString());
+        await NetworkManagement.Audit(conn,tx,actor,"routeros-inspect:"+status,"routeros_device",id.ToString());
         await tx.CommitAsync();
         return Results.Ok(new{status,sectionsOk=successes,totalSections=Sections.Length});
     }

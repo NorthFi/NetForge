@@ -49,6 +49,7 @@ builder.Services.AddHostedService<MonitoringWorker>();
 builder.Services.AddHostedService<AssuranceCpeProbeWorker>();
 builder.Services.AddHostedService<SnmpTelemetryWorker>();
 builder.Services.AddHostedService<TelemetryRetentionWorker>();
+builder.Services.AddHostedService<RouterOsComplianceWorker>();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
@@ -172,6 +173,7 @@ Endpoints.Map(authorized);
 StaffSecurity.Map(authorized);
 Ipam.Map(authorized);
 RouterOsInventory.Map(authorized);
+NetworkCompliance.Map(authorized);
 BackupVault.Map(authorized,app);
 NetworkChanges.Map(authorized);
 NetworkExecution.Map(authorized,app);
