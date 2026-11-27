@@ -34,7 +34,9 @@ an immutable receive movement and links the existing stock serial to the
 warehouse; it never inserts a duplicate serial or posts a procurement receipt.
 New equipment purchases are not classified as new by default, since manual
 receipts may include used equipment. Condition is recorded on the physical
-serial, not an automatic valuation adjustment.
+serial, visible in the warehouse serial view, not an automatic valuation
+adjustment. Scrapped serials remain in history and cannot be received as
+new stock for the same SKU.
 
 No stocktake, bulk returns, replacement serial mapping, warranty claims
 automation, inventory valuation, full accounting, active service cancellation

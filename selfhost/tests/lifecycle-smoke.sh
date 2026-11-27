@@ -40,4 +40,29 @@ api POST "/lifecycle/recoveries/$REC_CUST_ID/action" "{\"requestId\":\"$(req)\",
 COOKIE="$LIFE_COOKIE"; CSRF="$LIFE_CSRF"
 api GET /stock/reconciliation "" 200
 python3 -c 'import json,sys;assert json.load(open(sys.argv[1]))==[]' "$BASE/result.json"
+# Operational history is a hard gate even if a profile is disabled. No
+# deletion of operational records is used to circumvent the restriction.
+api POST /lifecycle/recoveries "{\"requestId\":\"$(req)\",\"equipmentId\":\"$ROS_EQUIPMENT\",\"itemId\":\"$ST_ITEM\",\"warehouseId\":\"$ST_MAIN\",\"note\":\"CI blocked operational asset\",\"confirm\":true}" 409
+grep -q 'operational profiles' "$BASE/result.json"
+# Legacy asset intake creates one serial in quarantine, and only release
+# credits stock. Repeated release cannot create a second stock record.
+api POST /equipment "{\"highsiteId\":\"$SITE\",\"category\":\"cpe\",\"name\":\"CI legacy C6x\",\"model\":\"C6x\",\"serialNumber\":\"CI-LEGACY-025\"}" 201
+LEGACY_ASSET="$(id)"
+LEGACY_REC="$(req)"
+api POST /lifecycle/recoveries "{\"requestId\":\"$LEGACY_REC\",\"equipmentId\":\"$LEGACY_ASSET\",\"itemId\":\"$ST_ITEM\",\"warehouseId\":\"$ST_MAIN\",\"note\":\"CI legacy recovered\",\"confirm\":true}" 201
+api GET /equipment "" 200
+python3 - "$BASE/result.json" "$LEGACY_ASSET" <<'PY'
+import json,sys
+assert all(x["id"]!=sys.argv[2] for x in json.load(open(sys.argv[1])))
+PY
+# Even an otherwise legitimate new backup enrollment must not reattach the
+# old deployment identity. Database trigger guards concurrent enrollments.
+api POST /backups/profiles "{\"equipmentId\":\"$LEGACY_ASSET\",\"name\":\"CI retired backup\",\"vendor\":\"mimosa\",\"confirm\":true}" 409
+api POST "/lifecycle/recoveries/$LEGACY_REC/action" "{\"requestId\":\"$(req)\",\"action\":\"test_pass\",\"condition\":\"tested_used\",\"note\":\"CI legacy bench test\",\"confirm\":true}" 200
+COOKIE="$APPROVER_COOKIE"; CSRF="$APPROVER_CSRF"
+api POST "/lifecycle/recoveries/$LEGACY_REC/action" "{\"requestId\":\"$(req)\",\"action\":\"release\",\"note\":\"CI legacy independent approval\",\"confirm\":true}" 200
+COOKIE="$LIFE_COOKIE"; CSRF="$LIFE_CSRF"
+docker exec "$PGCONTAINER" psql -U netforge_ci -d netforge_ci -Atqc "SELECT count(*) FROM stock_serials WHERE serial='CI-LEGACY-025' AND warehouse_id='$ST_MAIN' AND equipment_id IS NULL AND condition='tested_used'" | grep -qx 1
+api GET /stock/reconciliation "" 200
+python3 -c 'import json,sys;assert json.load(open(sys.argv[1]))==[]' "$BASE/result.json"
 echo "Equipment lifecycle smoke passed."

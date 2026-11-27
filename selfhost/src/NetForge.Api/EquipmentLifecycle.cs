@@ -162,7 +162,8 @@ public static class EquipmentLifecycle
             action is not ("test_pass" or "test_fail" or "send_rma" or "return_rma" or "release" or "scrap"))
             return Invalid("Confirm lifecycle action with inspection or custody evidence");
         if(action is ("release" or "scrap")&&!Admin(ctx))return Denied();
-        if(action=="test_pass"&&input.Condition is not ("tested_used" or "refurbished"))return Invalid("Select tested used or refurbished condition");
+        if(action=="test_pass"&&(input.Condition is not ("tested_used" or "refurbished")||note.Length>970))
+            return Invalid("Select tested used or refurbished condition and a test note of at most 970 characters");
         if(action=="send_rma"&&(input.SupplierId is null||reference.Length is <3 or >160))return Invalid("Supplier and RMA reference required");
         await using var c=await db.OpenConnectionAsync();await using var t=await c.BeginTransactionAsync();
         await Warehouse.Lock(c,t);
@@ -218,7 +219,9 @@ public static class EquipmentLifecycle
             UPDATE equipment_recoveries SET state=@state,resolved_at=CASE WHEN @state IN ('released','scrapped') THEN now() ELSE NULL END
             WHERE id=@id
             """,P("state",next),P("id",id));
-        await Event(c,t,ctx,id,input.RequestId,action,note,supplier,rma);
+        // Preserve the condition of every passed test, even if later
+        // inspections change the current case classification.
+        await Event(c,t,ctx,id,input.RequestId,action,action=="test_pass"?"["+input.Condition+"] "+note:note,supplier,rma);
         await t.CommitAsync();return Results.Ok(new{state=next});
     }
 }

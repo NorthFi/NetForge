@@ -52,7 +52,7 @@ async function warehouseConsole(el){
  async function serialView(item,w,skip=0){
   const n=++sequence,p=new URLSearchParams({item,offset:String(skip)});if(w)p.set('warehouse',w);
   const rows=await api('/stock/serials?'+p);if(!detail.isConnected||n!==sequence)return;
-  detail.innerHTML='<div class="toolbar"><h2>Serial records</h2><button id="st-s-prev">Previous</button><button id="st-s-next">Next</button></div>'+table(['Serial','Warehouse','State','Equipment ID'],rows.map(r=>vals(r.serial,r.warehouse,r.equipment_id?'Issued':r.reservation_id?'Reserved':'Available',r.equipment_id)));
+  detail.innerHTML='<div class="toolbar"><h2>Serial records</h2><button id="st-s-prev">Previous</button><button id="st-s-next">Next</button></div>'+table(['Serial','Warehouse','State','Condition','Equipment ID'],rows.map(r=>vals(r.serial,r.warehouse,r.recovery_state|| (r.equipment_id?'Issued':r.reservation_id?'Reserved':'Available'),r.condition,r.equipment_id)));
   const prev=detail.querySelector('#st-s-prev'),next=detail.querySelector('#st-s-next');prev.disabled=skip===0;next.disabled=rows.length<100;prev.onclick=()=>serialView(item,w,Math.max(0,skip-100)).catch(fail);next.onclick=()=>serialView(item,w,skip+100).catch(fail);
  }
  async function load(){
