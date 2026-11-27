@@ -1,6 +1,43 @@
 #!/usr/bin/env bash
 # root/selfhost/tests/staff-security-smoke.sh
-# Sourced by smoke.sh after other fixtures. Preserve admin cookie and CSRF.
+# Run in a fresh process so the existing six-attempt login limiter is not
+# weakened and the main smoke suite's staff/portal requests do not consume it.
+set -Eeuo pipefail
+BASE="$(mktemp -d)"
+PID=""
+trap 'if [ -n "$PID" ]; then kill "$PID" 2>/dev/null || true; wait "$PID" 2>/dev/null || true; fi; tail -35 "$BASE/server.log" 2>/dev/null || true; rm -rf "$BASE"' EXIT
+export ASPNETCORE_URLS="http://127.0.0.1:18991"
+export Database__ConnectionString="Host=127.0.0.1;Port=55432;Database=netforge_ci;Username=netforge_ci;Password=netforge_test_very_strong_secret"
+export NETFORGE_ADMIN_USER="ciadmin"
+export NETFORGE_ADMIN_PASSWORD="ci_admin_long_unique_password"
+export NETFORGE_KEY_DIRECTORY="$BASE/keys"
+BASEURL="$ASPNETCORE_URLS"
+dotnet selfhost/src/NetForge.Api/bin/Release/net11.0/NetForge.Api.dll >"$BASE/server.log" 2>&1 &
+PID="$!"
+for i in $(seq 1 80); do
+  if curl -fsS "$BASEURL/health" >/dev/null 2>&1; then break; fi
+  sleep 0.5
+done
+curl -fsS "$BASEURL/health" >/dev/null
+code="$(curl -sS -D "$BASE/admin.headers" -o "$BASE/result.json" -w '%{http_code}' \
+  -H 'Content-Type: application/json' --data '{"username":"ciadmin","password":"ci_admin_long_unique_password"}' "$BASEURL/api/login")"
+test "$code" = 200
+COOKIE="$(grep -i '^set-cookie: NetForge.Auth=' "$BASE/admin.headers" | head -1 | sed -E 's/^[^:]*: ([^;]*).*/\1/' | tr -d '\r')"
+CSRF="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["csrf"])' "$BASE/result.json")"
+test -n "$COOKIE"
+test -n "$CSRF"
+api() {
+  local method="$1" path="$2" payload="$3" expected="$4" code
+  if [[ "$method" = GET ]]; then
+    code="$(curl -sS -o "$BASE/result.json" -w '%{http_code}' -H "Cookie: $COOKIE" "$BASEURL/api$path")"
+  else
+    code="$(curl -sS -o "$BASE/result.json" -w '%{http_code}' -X "$method" \
+      -H "Cookie: $COOKIE" -H "X-CSRF-Token: $CSRF" \
+      -H 'Content-Type: application/json' --data "$payload" "$BASEURL/api$path")"
+  fi
+  test "$code" = "$expected" || { echo "Expected $expected got $code: $method $path"; cat "$BASE/result.json"; return 1; }
+}
+id() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["id"])' "$BASE/result.json"; }
 api POST /staff '{"username":"ci_staff_security","password":"long_staff_password_ci_1","role":"technician"}' 201
 STAFF_ID="$(id)"
 api POST /staff '{"username":"CI_STAFF_SECURITY","password":"long_staff_password_ci_2","role":"viewer"}' 409

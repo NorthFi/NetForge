@@ -76,6 +76,8 @@ jobs:
         run: bash selfhost/tests/snmpv3-wire-smoke.sh
       - name: Integration test with PostgreSQL 17
         run: bash selfhost/tests/smoke.sh
+      - name: Validate staff session lifecycle with isolated rate limiter
+        run: bash selfhost/tests/staff-security-smoke.sh
       - name: Upgrade legacy billing data to immutable journal
         run: bash selfhost/tests/billing-upgrade-smoke.sh
       - name: Build and exercise FreeRADIUS with PostgreSQL-backed subscriber

@@ -10,7 +10,7 @@ async function api(path,method='GET',payload){
  if(method!=='GET'&&csrf)opt.headers['X-CSRF-Token']=csrf;
  if(payload!==undefined){opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(payload)}
  const response=await fetch('/api'+path,opt);
- if(response.status===401&&path!=='/login'){csrf='';role='';username='';tab='Dashboard';data={};document.querySelectorAll('dialog[open]').forEach(d=>d.close());login();throw Error('Session expired or revoked. Sign in again.');}
+ if(response.status===401&&path!=='/login'&&path!=='/status'){window.location.reload();throw Error('Session expired or revoked. Sign in again.');}
  let body;try{body=await response.json()}catch{throw Error('Server returned an invalid response')}
  if(!response.ok)throw Error(body.error||body.title||'Request failed ('+response.status+')');
  return body;
