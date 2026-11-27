@@ -62,6 +62,7 @@ jobs:
           bash -n selfhost/tests/assurance-smoke.sh
           bash -n selfhost/tests/sla-probes-smoke.sh
           bash -n selfhost/tests/subscriber-probes-smoke.sh
+          bash -n selfhost/tests/staff-security-smoke.sh
           bash -n selfhost/tests/snmpv3-wire-smoke.sh
           bash -n selfhost/tests/billing-upgrade-smoke.sh
           bash -n selfhost/tests/radius-smoke.sh

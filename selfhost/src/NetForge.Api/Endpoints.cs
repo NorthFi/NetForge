@@ -59,7 +59,7 @@ public static class Endpoints
         {
             if (!IsAdmin(ctx)) return Forbidden();
             if (string.IsNullOrWhiteSpace(body.Username) || body.Username.Length > 80 ||
-                body.Password?.Length < 14 || !Allowed(body.Role,"admin","dispatcher","technician","viewer"))
+                body.Password is null || body.Password.Length is < 14 or > 2048 || !Allowed(body.Role,"admin","dispatcher","technician","viewer"))
                 return Invalid("Username, strong password and recognized role required");
             var id=await Store.Insert(db,
                 "INSERT INTO app_users(username,password_hash,role) VALUES (@u,@p,@r) RETURNING id",

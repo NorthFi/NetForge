@@ -25,7 +25,9 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         options.Cookie.SameSite = SameSiteMode.Strict;
         options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
         options.ExpireTimeSpan = TimeSpan.FromHours(8);
-        options.SlidingExpiration = true;
+        // Server-side sessions expire absolutely; a stolen cookie cannot renew indefinitely.
+        options.SlidingExpiration = false;
+        options.Events.OnValidatePrincipal = StaffSecurity.ValidatePrincipal;
         options.LoginPath = "/login";
         options.Events.OnRedirectToLogin = context =>
         {
@@ -126,20 +128,25 @@ app.MapPost("/api/login", async (HttpContext ctx, NpgsqlDataSource pool, LoginIn
     if (string.IsNullOrWhiteSpace(input.Username) || string.IsNullOrWhiteSpace(input.Password) ||
         input.Username.Length > 80 || input.Password.Length > 2048)
         return Results.BadRequest(new { error = "Invalid credentials" });
-    var users = await Store.Rows(pool, "SELECT id,username,password_hash,role,enabled FROM app_users WHERE lower(username)=lower(@u)",
+    var users = await Store.Rows(pool, "SELECT id,username,password_hash,role,enabled,session_generation FROM app_users WHERE lower(username)=lower(@u)",
         Store.P("u", input.Username.Trim()));
-    var user = users.FirstOrDefault();
+    var user = users.Count == 1 ? users[0] : null;
     if (user is null || user["enabled"] is not true ||
         !Passwords.Verify(input.Password, (string)user["password_hash"]!))
         return Results.Unauthorized();
 
+    // A credential change racing login makes the conditional insert fail.
+    var session = await StaffSecurity.OpenSession(pool,(Guid)user["id"]!,
+        (Guid)user["session_generation"]!);
+    if(session is null) return Results.Unauthorized();
     var csrf = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
     var claims = new List<Claim>
     {
         new(ClaimTypes.NameIdentifier, user["id"]!.ToString()!),
         new(ClaimTypes.Name, (string)user["username"]!),
         new(ClaimTypes.Role, (string)user["role"]!),
-        new("csrf", csrf)
+        new("csrf", csrf),
+        new(StaffSecurity.SessionClaim, session.Value.ToString())
     };
     await ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme,
         new ClaimsPrincipal(new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)));
@@ -151,13 +158,15 @@ var authorized = app.MapGroup("/api").RequireAuthorization();
 authorized.MapGet("/status", (ClaimsPrincipal user) =>
     Results.Ok(new { authenticated = true, username = user.Identity?.Name,
         role = user.FindFirst(ClaimTypes.Role)?.Value, csrf = user.FindFirst("csrf")?.Value }));
-authorized.MapPost("/logout", async (HttpContext ctx) =>
+authorized.MapPost("/logout", async (HttpContext ctx,NpgsqlDataSource db) =>
 {
+    await StaffSecurity.CloseSession(ctx,db);
     await ctx.SignOutAsync();
     return Results.Ok(new { ok = true });
 });
 
 Endpoints.Map(authorized);
+StaffSecurity.Map(authorized);
 NetworkManagement.Map(authorized);
 ServiceLifecycle.Map(authorized);
 CustomerPortal.MapStaff(authorized);

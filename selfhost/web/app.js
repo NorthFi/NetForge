@@ -10,6 +10,7 @@ async function api(path,method='GET',payload){
  if(method!=='GET'&&csrf)opt.headers['X-CSRF-Token']=csrf;
  if(payload!==undefined){opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(payload)}
  const response=await fetch('/api'+path,opt);
+ if(response.status===401&&path!=='/login'){csrf='';role='';username='';tab='Dashboard';data={};document.querySelectorAll('dialog[open]').forEach(d=>d.close());login();throw Error('Session expired or revoked. Sign in again.');}
  let body;try{body=await response.json()}catch{throw Error('Server returned an invalid response')}
  if(!response.ok)throw Error(body.error||body.title||'Request failed ('+response.status+')');
  return body;
@@ -464,6 +465,29 @@ function details(collection,r){
  const actions=d.querySelector('#actions');
  const btn=(name,handler)=>{const b=document.createElement('button');b.textContent=name;b.onclick=handler;actions.append(b)};
  const run=async (path,body={})=>{try{await api(path,'POST',body);d.close();await refresh()}catch(e){d.querySelector('#actionerror').textContent=e.message}};
+ if(collection==='staff'&&role==='admin'&&r.username!==username){
+  btn('Change role / access',()=>{
+   const panel=dialog('<h2>Staff access</h2><form id="access"><label>Role</label><select name="role"><option>admin</option><option>dispatcher</option><option>technician</option><option>viewer</option></select><label><input name="enabled" type="checkbox" style="width:auto"> Enabled</label><p class="error" id="staff-error"></p><button class="primary">Save access</button><button type="button" id="cancel">Cancel</button></form>');
+   panel.querySelector('[name="role"]').value=r.role;
+   panel.querySelector('[name="enabled"]').checked=r.enabled===true;
+   panel.querySelector('#cancel').onclick=()=>panel.close();
+   panel.querySelector('#access').onsubmit=async ev=>{
+    ev.preventDefault();if(!confirm('Change access for '+r.username+' and revoke all their sessions?'))return;
+    try{await api('/staff/'+r.id+'/access','POST',{role:panel.querySelector('[name="role"]').value,enabled:panel.querySelector('[name="enabled"]').checked,confirm:true});panel.close();d.close();await refresh()}catch(err){panel.querySelector('#staff-error').textContent=err.message}
+   };
+  });
+  btn('Reset password',()=>{
+   const panel=dialog('<h2>Reset staff password</h2><form id="reset"><label>New password (14–2048 characters)</label><input name="password" type="password" autocomplete="new-password" required minlength="14" maxlength="2048"><label>Repeat password</label><input name="repeat" type="password" autocomplete="new-password" required><p class="error" id="staff-error"></p><button class="primary">Reset password</button><button type="button" id="cancel">Cancel</button></form>');
+   panel.querySelector('#cancel').onclick=()=>panel.close();
+   panel.querySelector('#reset').onsubmit=async ev=>{
+    ev.preventDefault();const fields=new FormData(ev.target);
+    if(fields.get('password')!==fields.get('repeat')){panel.querySelector('#staff-error').textContent='Passwords do not match';return}
+    if(!confirm('Reset password for '+r.username+' and revoke all their sessions?'))return;
+    try{await api('/staff/'+r.id+'/password','POST',{password:fields.get('password'),confirm:true});ev.target.reset();panel.close();d.close();await refresh()}catch(err){panel.querySelector('#staff-error').textContent=err.message}
+   };
+  });
+  btn('Revoke all sessions',()=>{if(confirm('Sign '+r.username+' out of all sessions?'))run('/staff/'+r.id+'/revoke-sessions',{confirm:true})});
+ }
  if(collection==='nas'&&role==='admin'){
   btn('Disconnect settings',()=>{
    const d2=dialog('<h2>NAS disconnect settings</h2><form id="nas-config"><label>NAS type</label><select name="vendor"><option value="mikrotik">MikroTik</option><option value="generic">Generic</option></select><label>Disconnect UDP port</label><input name="port" type="number" min="1" max="65535" value="'+esc(r.disconnect_port||1700)+'"><label><input name="enabled" type="checkbox" style="width:auto"> Enable Disconnect-Request on this NAS</label><p class="error" id="config-error"></p><button class="primary">Save NAS settings</button><button type="button" id="close">Cancel</button></form>');
