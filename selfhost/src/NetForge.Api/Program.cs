@@ -50,6 +50,7 @@ builder.Services.AddHostedService<TelemetryRetentionWorker>();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
+    options.AddConcurrencyLimiter("probe-ingest", limiter => { limiter.PermitLimit=32; limiter.QueueLimit=0; });
     options.AddPolicy("login", ctx =>
         RateLimitPartition.GetFixedWindowLimiter(
             ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -169,6 +170,8 @@ NocIncidents.Map(authorized);
 ServiceAssurance.Map(authorized);
 AssuranceAgreements.Map(authorized);
 AssuranceCpeProbes.Map(authorized);
+SubscriberProbes.MapStaff(authorized);
+SubscriberProbes.MapIngest(app);
 SnmpTelemetry.Map(authorized);
 RfTelemetry.Map(authorized);
 TelemetryRetention.Map(authorized);
