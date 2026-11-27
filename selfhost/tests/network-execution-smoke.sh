@@ -31,6 +31,22 @@ agent_api "$EXEC_TOKEN" "/jobs/$EXEC_TARGET/report" "{\"claim\":\"$CLAIM\",\"res
 grep -q '"duplicate":true' "$BASE/result.json"
 api POST "/changes/plans/$EXEC_PLAN/targets/$EXEC_TARGET/outcome" '{"success":true,"note":"Verified manually in fixture","confirm":true}' 200
 grep -q '"state":"completed"' "$BASE/result.json"
+# A failed SSH result cannot be attested as success, and blocks subsequent work.
+api POST /changes/plans "{\"versionId\":\"$REV2\",\"groupId\":\"$GROUP\",\"canaryProfileId\":\"$VAULT\",\"reason\":\"CI failed execution agent\",\"windowStart\":\"$START\",\"windowEnd\":\"$END\",\"confirm\":true}" 201
+FAIL_PLAN="$(id)"
+api GET "/changes/plans/$FAIL_PLAN/targets" "" 200
+FAIL_TARGET="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[0]["id"])' "$BASE/result.json")"
+COOKIE="$APPROVER_COOKIE"; CSRF="$APPROVER_CSRF"
+api POST "/changes/plans/$FAIL_PLAN/approve" '{"confirm":true}' 200
+COOKIE="$CHANGE_COOKIE"; CSRF="$CHANGE_CSRF"
+api POST "/changes/plans/$FAIL_PLAN/targets/$FAIL_TARGET/handoff" '{"confirm":true,"automatic":true}' 200
+agent_api "$EXEC_TOKEN" /claim "{\"address\":\"$NETFORGE_CI_ROUTEROS_IP\"}" 200
+FAIL_CLAIM="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["claim"])' "$BASE/result.json")"
+agent_api "$EXEC_TOKEN" "/jobs/$FAIL_TARGET/report" "{\"claim\":\"$CLAIM\",\"result\":\"exit_zero\",\"outputBytes\":0,\"exitCode\":0}" 401
+agent_api "$EXEC_TOKEN" "/jobs/$FAIL_TARGET/report" "{\"claim\":\"$FAIL_CLAIM\",\"result\":\"timeout\",\"outputBytes\":5,\"exitCode\":null}" 200
+api POST "/changes/plans/$FAIL_PLAN/targets/$FAIL_TARGET/outcome" '{"success":true,"note":"False success must be denied","confirm":true}' 409
+api POST "/changes/plans/$FAIL_PLAN/targets/$FAIL_TARGET/outcome" '{"success":false,"note":"Timeout; verified device manually","confirm":true}' 200
+grep -q '"state":"halted"' "$BASE/result.json"
 api POST "/changes/agents/$VAULT/token" '{"enable":false,"confirm":true}' 200
 agent_api "$EXEC_TOKEN" /claim "{\"address\":\"$NETFORGE_CI_ROUTEROS_IP\"}" 401
 echo "Network execution API smoke passed."

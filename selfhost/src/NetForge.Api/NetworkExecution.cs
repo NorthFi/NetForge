@@ -38,7 +38,7 @@ public static class NetworkExecution
     private static bool ValidAddress(string? value)=>IPAddress.TryParse(value,out var ip)&&
         ip.AddressFamily==AddressFamily.InterNetwork&&ip.ToString()==value&&
         ip.GetAddressBytes()[0] is >0 and <224 and not 127&&
-        !value!.StartsWith("169.254.",StringComparison.Ordinal);
+        !value!.StartsWith("169.254.",StringComparison.Ordinal)&&value!="100.100.100.200";
     private static Task<List<Dictionary<string,object?>>> Source(NpgsqlConnection conn,NpgsqlTransaction tx,Guid profile)=>
         NetworkManagement.Query(conn,tx,"""
             SELECT p.vendor,COALESCE(n.nasname,host(e.management_ip)) AS current_address,

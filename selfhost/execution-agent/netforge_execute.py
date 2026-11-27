@@ -98,6 +98,10 @@ def execute(cfg, job):
     if remaining < 65:
         return "refused", 0, None
     args = ssh_args(cfg, job["command"])
+    # Recheck the deadline after resolving local key paths, then use a
+    # monotonic deadline so wall-clock adjustments do not extend execution.
+    if (deadline-datetime.datetime.now(datetime.timezone.utc)).total_seconds() < 65:
+        return "refused", 0, None
     stop = time.monotonic()+60
     count = 0
     # No shell, no forwarding, no interactive input. Do not store raw output
