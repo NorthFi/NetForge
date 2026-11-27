@@ -25,7 +25,14 @@ async function complianceConsole(el){
   if(admin){
    detail.querySelector('#cmp-policy').onclick=()=>policy(d).catch(fail);
    const poll=detail.querySelector('#cmp-poll');if(poll)poll.onclick=async()=>{if(!confirm('Run read-only RouterOS inspection?'))return;poll.disabled=true;try{await api('/routeros/devices/'+d.id+'/poll','POST',{confirm:true});await load()}catch(e){fail(e);poll.disabled=false}};
-   const base=detail.querySelector('#cmp-baseline');if(base)base.onclick=()=>form('Approve configuration baseline','<p>Review the latest inspection in RouterOS Management first. This records the current static configuration as the approved standard; prior baselines remain immutable.</p><label>Reason</label><textarea name="reason" required minlength="5" maxlength="240"></textarea>',f=>api(path+'/baseline','POST',{reason:f.get('reason'),confirm:true}));
+   const base=detail.querySelector('#cmp-baseline');if(base)base.onclick=async()=>{
+    try{
+     const preview=await api(path+'/baseline-preview');
+     if(!detail.isConnected||selected?.id!==d.id)return;
+     const sections=Object.fromEntries(Object.entries(preview.sections).map(([k,v])=>[k,v.map(row=>JSON.parse(row))]));
+     form('Approve configuration baseline','<p>Review the exact captured static configuration below. The server rejects approval if the inspected snapshot changes.</p><p>Inspection: '+esc(preview.sourcePollAt)+'</p><textarea readonly rows="18">'+esc(JSON.stringify(sections,null,2))+'</textarea><p>SHA-256: '+esc(preview.baselineSha256)+'</p><label>Reason</label><textarea name="reason" required minlength="5" maxlength="240"></textarea>',f=>api(path+'/baseline','POST',{reason:f.get('reason'),confirm:true,snapshotSha256:preview.snapshotSha256}));
+    }catch(e){fail(e)}
+   };
   }
   const result=detail.querySelector('#cmp-result');
   if(!d.configured){result.textContent='No compliance policy configured.';return}

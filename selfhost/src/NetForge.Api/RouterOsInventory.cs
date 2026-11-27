@@ -211,7 +211,11 @@ public static class RouterOsInventory
         if(row["enabled"] is not true || row["current_address"] as string!=address ||
             !Allowed(config,address,port))
         {
-            if(scheduled)await tx.CommitAsync();
+            // Do not leave a previously successful snapshot looking current
+            // after policy denies access. No network request was sent.
+            await NetworkManagement.Execute(conn,tx,
+                "UPDATE routeros_devices SET last_status='failed',snapshot=NULL WHERE id=@id",P("id",id));
+            await tx.CommitAsync();
             return Conflict("Device disabled, inventory address changed, or server allowlist denied access");
         }
         if(row["last_poll_at"] is DateTime previous && previous>DateTime.UtcNow.AddSeconds(-60))

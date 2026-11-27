@@ -14,7 +14,7 @@ namespace NetForge.Api;
 
 public sealed record CompliancePolicyInput(string? ExpectedVersion,Guid? BackupProfileId,
     int BackupMaxHours,int SnapshotMaxHours,bool RequireBaseline,int PollIntervalMinutes,bool Confirm);
-public sealed record ComplianceBaselineInput(string Reason,bool Confirm);
+public sealed record ComplianceBaselineInput(string Reason,bool Confirm,string? SnapshotSha256=null);
 internal sealed record ComplianceCheck(string Name,string State,string Detail);
 
 public static class NetworkCompliance
@@ -138,6 +138,11 @@ public static class NetworkCompliance
         }
         return checks;
     }
+    private static bool BaselineEligible(Dictionary<string,object?> row)=>
+        row["enabled"] is true&&row["address"] as string==row["current_address"] as string&&
+        row["last_status"] as string=="ok"&&row["last_poll_at"] is DateTime observed&&
+        observed<=DateTime.UtcNow&&observed>=DateTime.UtcNow.AddHours(-(int)row["snapshot_max_hours"]!)&&
+        row["snapshot"] is string;
     private const string Evidence="""
         SELECT c.*,d.name,d.enabled,host(d.address) AS address,
           COALESCE(n.nasname,host(e.management_ip)) AS current_address,
@@ -216,6 +221,21 @@ public static class NetworkCompliance
             await tx.CommitAsync();
             return Results.Ok(new{ok=true});
         });
+        api.MapGet("/compliance/devices/{id:guid}/baseline-preview",async(Guid id,HttpContext ctx,NpgsqlDataSource db)=>
+        {
+            if(!Admin(ctx))return Denied();
+            var rows=await Store.Rows(db,Evidence+" WHERE c.device_id=@id",P("id",id));
+            if(rows.Count!=1)return Results.NotFound();
+            var row=rows.Single();
+            if(!BaselineEligible(row))return Conflict("A recent, complete and enabled inspection is required");
+            using var snapshot=JsonDocument.Parse((string)row["snapshot"]!);
+            var normalized=Normalize(snapshot.RootElement);
+            if(normalized.Count!=Rules.Length)return Conflict("Configuration fields are missing");
+            var body=JsonSerializer.Serialize(normalized,Json);
+            ctx.Response.Headers.CacheControl="no-store";
+            return Results.Ok(new{snapshotSha256=Hash((string)row["snapshot"]!),baselineSha256=Hash(body),
+                sourcePollAt=row["last_poll_at"],sections=normalized});
+        });
         api.MapPost("/compliance/devices/{id:guid}/baseline",async(Guid id,HttpContext ctx,NpgsqlDataSource db,ComplianceBaselineInput input)=>
         {
             if(!Admin(ctx))return Denied();
@@ -229,11 +249,9 @@ public static class NetworkCompliance
             var rows=await NetworkManagement.Query(conn,tx,Evidence+" WHERE c.device_id=@id",P("id",id));
             if(rows.Count!=1)return Conflict("Configure a compliance policy first");
             var row=rows.Single();
-            if(row["enabled"] is not true||row["address"] as string!=row["current_address"] as string||
-                row["last_status"] as string!="ok"||row["last_poll_at"] is not DateTime observed||
-                observed<DateTime.UtcNow.AddHours(-(int)row["snapshot_max_hours"]!)||
-                observed>DateTime.UtcNow||row["snapshot"] is not string raw)
-                return Conflict("An enabled device with a recent successful complete inspection is required");
+            if(!BaselineEligible(row))return Conflict("An enabled device with a recent successful complete inspection is required");
+            var observed=(DateTime)row["last_poll_at"]!;var raw=(string)row["snapshot"]!;
+            if(input.SnapshotSha256!=Hash(raw))return Conflict("Inspection changed or preview was not reviewed; reload baseline preview");
             using var snapshot=JsonDocument.Parse(raw);
             var normalized=Normalize(snapshot.RootElement);
             if(normalized.Count!=Rules.Length)return Conflict("Configuration fields are missing; no baseline captured");

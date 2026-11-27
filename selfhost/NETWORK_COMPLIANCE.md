@@ -10,7 +10,9 @@ inspection age and backup age limits (1–168 hours), baseline requirement and
 read-only polling interval (0 disabled, 15–1440 minutes). Dispatchers can view
 policies and evidence. Inspect the current router in RouterOS Management before
 approving a baseline with a reason. Approval requires a recent complete
-inspection and all required fields. Baselines are immutable, maximum 100.
+inspection and all required fields. The UI presents the exact normalized
+configuration and supplies the preview's snapshot hash; a changed snapshot
+is rejected. Baselines are immutable, maximum 100.
 
 Checks are evaluated on request, not cached: missing, stale or incomplete
 evidence is unknown. A failed check takes precedence over unknown; all
