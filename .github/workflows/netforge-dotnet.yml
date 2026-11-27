@@ -46,6 +46,7 @@ jobs:
           node --check selfhost/web/ipam.js
           node --check selfhost/web/routeros.js
           node --check selfhost/web/backups.js
+          node --check selfhost/web/network-changes.js
           node --check selfhost/web/portal/app.js
       - name: Validate FreeRADIUS bootstrap shell
         run: sh -n selfhost/radius/entrypoint.sh
@@ -69,6 +70,7 @@ jobs:
           bash -n selfhost/tests/ipam-smoke.sh
           bash -n selfhost/tests/routeros-smoke.sh
           bash -n selfhost/tests/backup-smoke.sh
+          bash -n selfhost/tests/network-changes-smoke.sh
           python3 -m py_compile selfhost/backup-agent/netforge_backup.py
           bash -n selfhost/tests/snmpv3-wire-smoke.sh
           bash -n selfhost/tests/billing-upgrade-smoke.sh

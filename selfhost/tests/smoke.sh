@@ -705,5 +705,6 @@ source selfhost/tests/subscriber-probes-smoke.sh
 source selfhost/tests/ipam-smoke.sh
 source selfhost/tests/routeros-smoke.sh
 source selfhost/tests/backup-smoke.sh
+source selfhost/tests/network-changes-smoke.sh
 
 echo "NetForge .NET 11 / PostgreSQL API smoke passed."

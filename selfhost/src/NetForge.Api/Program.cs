@@ -172,6 +172,7 @@ StaffSecurity.Map(authorized);
 Ipam.Map(authorized);
 RouterOsInventory.Map(authorized);
 BackupVault.Map(authorized,app);
+NetworkChanges.Map(authorized);
 NetworkManagement.Map(authorized);
 ServiceLifecycle.Map(authorized);
 CustomerPortal.MapStaff(authorized);
