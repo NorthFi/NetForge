@@ -61,9 +61,12 @@ jobs:
           bash -n selfhost/tests/noc-smoke.sh
           bash -n selfhost/tests/assurance-smoke.sh
           bash -n selfhost/tests/sla-probes-smoke.sh
+          bash -n selfhost/tests/subscriber-probes-smoke.sh
           bash -n selfhost/tests/snmpv3-wire-smoke.sh
           bash -n selfhost/tests/billing-upgrade-smoke.sh
           bash -n selfhost/tests/radius-smoke.sh
+      - name: Validate subscriber probe agent TLS and timeout behavior
+        run: python3 selfhost/tests/test_probe_agent.py
       - name: Install Net-SNMP CLI and test agent
         run: |
           sudo apt-get update -qq

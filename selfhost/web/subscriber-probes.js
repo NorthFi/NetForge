@@ -60,6 +60,7 @@ function subscriberProbeConsole(el){
     catch(e){notice(e.message,true)}
    });
    output.querySelectorAll('[data-sp-rotate]').forEach(b=>b.onclick=async()=>{
+    if(location.protocol!=='https:'){notice('Use HTTPS before rotating credentials.',true);return}
     if(!confirm('Invalidate the previous token and issue new credentials? Update the authorized local agent configuration manually.'))return;
     try{const result=await api('/assurance/subscriber-probes/'+b.dataset.spRotate+'/rotate','POST',{confirm:true});configuration(result);await load()}
     catch(e){notice(e.message,true)}

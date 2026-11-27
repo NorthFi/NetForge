@@ -30,8 +30,10 @@ public static class SubscriberProbes
         CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(Hash(token)),Encoding.ASCII.GetBytes(stored.Trim()));
     private static bool DnsName(string host)=>host.Length is >=3 and <=253 &&
         host.Contains('.') && Uri.CheckHostName(host)==UriHostNameType.Dns &&
-        host.All(c=>char.IsAsciiLetterOrDigit(c)||c is '.' or '-');
+        host.All(c=>char.IsAsciiLetterOrDigit(c)||c is '.' or '-') &&
+        host.Split('.').All(label=>label.Length is >=1 and <=63 && label[0]!='-' && label[^1]!='-');
     private static bool HttpsTarget(string url)=>url.Length<=512 &&
+        url.All(c=>c is >= '!' and <= '~') && !url.Contains('\\') &&
         Uri.TryCreate(url,UriKind.Absolute,out var parsed) &&
         parsed.Scheme==Uri.UriSchemeHttps && parsed.Port==443 &&
         DnsName(parsed.Host) && parsed.UserInfo=="" && parsed.Query=="" && parsed.Fragment=="";
