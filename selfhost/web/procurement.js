@@ -4,7 +4,7 @@ async function procurementConsole(el){
  const admin=role==='admin';
  el.insertAdjacentHTML('beforeend','<div class="toolbar"><div><h1>Procurement & highsite stock</h1><p class="sub">Purchase approvals · partial receipts · equipment deployment</p></div><button id="po-refresh">Refresh</button></div><p class="note">Unit costs are agreed commercial amounts in ZAR, excluding separately handled taxes or freight. No accounting posting is made. Receive and deploy only confirmed physical stock.</p><div id="po-actions"></div><div id="po-list"></div><div id="po-detail"></div>');
  const actions=el.querySelector('#po-actions'),list=el.querySelector('#po-list'),detail=el.querySelector('#po-detail');
- let suppliers=[],items=[],warehouses=[],view='orders',offset=0,selected=null,seq=0;
+ let suppliers=[],items=[],warehouses=[],view='orders',state='',offset=0,selected=null,seq=0;
  const fail=e=>{if(list.isConnected)notice(e.message,true)};
  const opt=(v,l)=>'<option value="'+esc(v)+'">'+esc(l)+'</option>';
  const itemOptions=()=>items.map(i=>opt(i.id,i.sku+' · '+i.name+(i.serialized?' [serial]':''))).join('');
@@ -38,11 +38,14 @@ async function procurementConsole(el){
  }
  async function load(){
   const n=++seq;detail.innerHTML='';
-  const paged=view!=='suppliers',rows=paged?await api('/procurement/'+view+'?offset='+offset):suppliers;
+  const paged=view!=='suppliers',params=new URLSearchParams({offset:String(offset)});
+  if(view==='orders'&&state)params.set('state',state);
+  const rows=paged?await api('/procurement/'+view+'?'+params):suppliers;
   if(!list.isConnected||n!==seq)return;
   actions.querySelector('#po-prev').disabled=!paged||offset===0;actions.querySelector('#po-next').disabled=!paged||rows.length<100;
+  actions.querySelector('#po-state').disabled=view!=='orders';
   if(view==='orders'){
-   list.innerHTML=table(['PO','Supplier','Warehouse','State','Ordered value','Received value',''],rows.map(o=>[...vals('PO-'+o.number,o.supplier_name,o.warehouse,o.state,money(o.ordered_value),money(o.received_value)),'<button data-order="'+esc(o.id)+'">Inspect</button>']));
+   list.innerHTML=table(['PO','Supplier','Warehouse','State','Expected','Ordered','Received','Open commitment',''],rows.map(o=>[...vals('PO-'+o.number,o.supplier_name,o.warehouse,o.state+(o.overdue?' · overdue':''),o.expected_day,money(o.ordered_value),money(o.received_value),money(o.open_commitment)),'<button data-order="'+esc(o.id)+'">Inspect</button>']));
    list.querySelectorAll('[data-order]').forEach(b=>b.onclick=()=>{selected=b.dataset.order;show(rows.find(o=>o.id===selected)).catch(fail)});
    if(selected){const o=rows.find(x=>x.id===selected);if(o)await show(o);else selected=null}
   }else if(view==='suppliers'){
@@ -56,8 +59,9 @@ async function procurementConsole(el){
  }
  async function refresh(){
   [suppliers,items,warehouses]=await Promise.all([api('/procurement/suppliers'),api('/stock/items'),api('/stock/warehouses')]);if(!list.isConnected)return;
-  actions.innerHTML='<div class="buttons">'+(admin?'<button id="po-supplier">+ Supplier</button>':'')+'<button class="primary" id="po-new">+ Purchase order</button><button id="po-deploy">Deploy highsite stock</button></div><div class="buttons"><select id="po-view"><option value="orders">Orders</option><option value="suppliers">Suppliers</option><option value="reorder">Reorder suggestions</option><option value="highsite-deployments">Highsite deployments</option></select><button id="po-prev">Previous</button><button id="po-next">Next</button></div>';
+  actions.innerHTML='<div class="buttons">'+(admin?'<button id="po-supplier">+ Supplier</button>':'')+'<button class="primary" id="po-new">+ Purchase order</button><button id="po-deploy">Deploy highsite stock</button></div><div class="buttons"><select id="po-view"><option value="orders">Orders</option><option value="suppliers">Suppliers</option><option value="reorder">Reorder suggestions</option><option value="highsite-deployments">Highsite deployments</option></select><select id="po-state"><option value="">All order states</option>'+['pending','approved','partial','received','cancelled'].map(s=>opt(s,s)).join('')+'</select><button id="po-prev">Previous</button><button id="po-next">Next</button></div>';
   actions.querySelector('#po-view').value=view;actions.querySelector('#po-view').onchange=e=>{view=e.target.value;offset=0;selected=null;load().catch(fail)};
+  actions.querySelector('#po-state').value=state;actions.querySelector('#po-state').onchange=e=>{state=e.target.value;offset=0;selected=null;load().catch(fail)};
   actions.querySelector('#po-prev').onclick=()=>{offset=Math.max(0,offset-100);load().catch(fail)};actions.querySelector('#po-next').onclick=()=>{offset+=100;load().catch(fail)};
   if(admin)actions.querySelector('#po-supplier').onclick=()=>form('Create supplier','<label>Name</label><input name="name" required maxlength="160"><label>Account reference</label><input name="accountReference" maxlength="100"><label>Email</label><input name="email" type="email" maxlength="254"><label>Phone</label><input name="phone" maxlength="70">',f=>api('/procurement/suppliers','POST',Object.fromEntries(f)));
   actions.querySelector('#po-new').onclick=createOrder;

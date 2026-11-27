@@ -70,7 +70,10 @@ public static class Procurement
             if(offset is <0 or >1000000||state is not (null or "pending" or "approved" or "partial" or "received" or "cancelled"))return Invalid("Invalid filter");
             return Results.Ok(await Store.Rows(db,"""
                 SELECT o.*,w.name AS warehouse,b.name AS branch,u.username AS creator,a.username AS approver,
-                    totals.ordered_value,totals.received_value,totals.outstanding
+                    totals.ordered_value,totals.received_value,totals.outstanding,
+                    CASE WHEN o.state IN ('approved','partial') THEN totals.ordered_value-totals.received_value ELSE 0 END AS open_commitment,
+                    (o.state IN ('approved','partial') AND o.expected_day IS NOT NULL
+                      AND o.expected_day<(now() AT TIME ZONE 'Africa/Johannesburg')::date) AS overdue
                 FROM procurement_orders o JOIN stock_warehouses w ON w.id=o.warehouse_id JOIN branches b ON b.id=w.branch_id
                 JOIN app_users u ON u.id=o.created_by LEFT JOIN app_users a ON a.id=o.approved_by
                 LEFT JOIN LATERAL(SELECT sum(ordered_value) AS ordered_value,sum(received_value) AS received_value,

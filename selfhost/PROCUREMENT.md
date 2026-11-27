@@ -18,7 +18,10 @@ and advisory lock as manual warehouse receiving, and links the movement to
 the purchase line. Duplicate request IDs or serials roll back all changes.
 Do not record the same physical delivery through manual warehouse receiving
 as well. Cancelling a partially received PO cancels remaining quantities only;
-already received stock and its history remain. Disabling a supplier blocks
+already received stock and its history remain. Open commitment is the
+unreceived ordered cost of approved/partial orders, excluding cancelled
+remainders. Overdue compares expected delivery day to the South African
+calendar date (Africa/Johannesburg). Disabling a supplier blocks
 new orders and approvals but not existing approved receipts.
 
 Reorder recommendations consider existing branch warehouse/item balances,
