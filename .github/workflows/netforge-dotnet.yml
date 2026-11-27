@@ -49,6 +49,7 @@ jobs:
           node --check selfhost/web/network-changes.js
           node --check selfhost/web/compliance.js
           node --check selfhost/web/sales.js
+          node --check selfhost/web/warehouse.js
           node --check selfhost/web/portal/app.js
       - name: Validate FreeRADIUS bootstrap shell
         run: sh -n selfhost/radius/entrypoint.sh
@@ -76,6 +77,7 @@ jobs:
           bash -n selfhost/tests/network-execution-smoke.sh
           bash -n selfhost/tests/compliance-smoke.sh
           bash -n selfhost/tests/sales-smoke.sh
+          bash -n selfhost/tests/warehouse-smoke.sh
           python3 -m py_compile selfhost/execution-agent/netforge_execute.py
           python3 -m py_compile selfhost/backup-agent/netforge_backup.py
           bash -n selfhost/tests/snmpv3-wire-smoke.sh

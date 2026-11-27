@@ -260,6 +260,11 @@ public static class SalesOperations
         if(o["state"] as string is not ("unscheduled" or "scheduled" or "blocked"))return Conflict("Only unstarted or blocked orders may be scheduled");
         await NetworkManagement.Query(conn,tx,"SELECT id FROM branches WHERE id=@id FOR UPDATE",P("id",o["branch_id"]));
         if((await NetworkManagement.Query(conn,tx,"""
+            SELECT r.id FROM stock_reservations r JOIN stock_warehouses w ON w.id=r.warehouse_id
+            WHERE r.order_id=@id AND r.state='reserved' AND w.technician_id IS NOT NULL AND w.technician_id<>@tech LIMIT 1
+            """,P("id",id),P("tech",input.TechnicianId))).Count!=0)
+            return Conflict("Release previous technician stock reservations before reassignment");
+        if((await NetworkManagement.Query(conn,tx,"""
             SELECT u.id FROM branch_technicians r JOIN app_users u ON u.id=r.user_id
             WHERE r.branch_id=@branch AND r.user_id=@user AND u.role='technician' AND u.enabled FOR SHARE OF u
             """,P("branch",o["branch_id"]),P("user",input.TechnicianId))).Count!=1)
@@ -288,6 +293,11 @@ public static class SalesOperations
             _=>false
         };
         if(!allowed)return Conflict("Installation state transition not permitted");
+        // The order lock serializes against warehouse reservation/issue.
+        // Never close an order with allocated stock still outstanding.
+        if(input.State is ("completed" or "cancelled")&&
+            (await NetworkManagement.Query(conn,tx,"SELECT id FROM stock_reservations WHERE order_id=@id AND state='reserved' LIMIT 1",P("id",id))).Count!=0)
+            return Conflict("Issue or release all stock reservations before closing the installation");
         await NetworkManagement.Execute(conn,tx,"""
             UPDATE installation_orders SET state=@state,result_note=@note,
                 completed_at=CASE WHEN @state='completed' THEN now() ELSE NULL END WHERE id=@id

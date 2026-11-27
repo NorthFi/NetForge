@@ -2,7 +2,7 @@
 'use strict';
 const root=document.querySelector('#root'),identity=document.querySelector('#identity'),logout=document.querySelector('#logout');
 let csrf='',role='',username='',tab='Dashboard',data={};
-const views=['Dashboard','Customers','Sales','Installation Planner','Services','Packages','Highsites','Sectors','Equipment','IPv4 IPAM','RouterOS Management','Network Compliance','Backup Vault','Network Changes','RADIUS NAS','RADIUS Sessions','RADIUS Usage','RADIUS Operations','Tickets','Billing','Bank Reconciliation','Financial Ledger','Billing Policy','Invoice Automation','Notifications','Network Monitoring','NOC Incidents','Service Assurance','SLA Credits','CPE Reachability','Subscriber Probes','SNMP Telemetry','RF Metrics','Highsite Impact','Telemetry Retention','Customer Portal','Staff'];
+const views=['Dashboard','Customers','Sales','Installation Planner','Warehouse','Services','Packages','Highsites','Sectors','Equipment','IPv4 IPAM','RouterOS Management','Network Compliance','Backup Vault','Network Changes','RADIUS NAS','RADIUS Sessions','RADIUS Usage','RADIUS Operations','Tickets','Billing','Bank Reconciliation','Financial Ledger','Billing Policy','Invoice Automation','Notifications','Network Monitoring','NOC Incidents','Service Assurance','SLA Credits','CPE Reachability','Subscriber Probes','SNMP Telemetry','RF Metrics','Highsite Impact','Telemetry Retention','Customer Portal','Staff'];
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
 const money=n=>new Intl.NumberFormat('en-ZA',{style:'currency',currency:'ZAR'}).format(Number(n)||0);
 async function api(path,method='GET',payload){
@@ -29,6 +29,7 @@ async function boot(skipAuth=false){
    if(v==='Billing Policy'&&role!=='admin')return;
    if(['Network Monitoring','NOC Incidents','Service Assurance','SLA Credits','CPE Reachability','Subscriber Probes','SNMP Telemetry','RF Metrics','Highsite Impact'].includes(v)&&!['admin','dispatcher'].includes(role))return;
    if(v==='Sales'&&!['admin','dispatcher'].includes(role))return;
+   if(v==='Warehouse'&&!['admin','dispatcher'].includes(role))return;
    if(v==='Installation Planner'&&!['admin','dispatcher','technician'].includes(role))return;
    if(v==='Network Compliance'&&!['admin','dispatcher'].includes(role))return;
    if(v==='Network Changes'&&!['admin','dispatcher'].includes(role))return;
@@ -62,6 +63,7 @@ function render(){
  else if(tab==='Sectors')list(content,'sectors','Access sectors',['highsite','name','ssid','azimuth','frequency_mhz','max_customers','customers']);
  else if(tab==='Equipment')list(content,'equipment','Site & customer equipment',['name','model','category','account','highsite','management_ip','serial_number','ownership']);
  else if(tab==='Sales')salesConsole(content);
+ else if(tab==='Warehouse')warehouseConsole(content);
  else if(tab==='Installation Planner')installationsConsole(content);
  else if(tab==='Network Compliance')complianceConsole(content);
  else if(tab==='Network Changes')networkChangesConsole(content);
