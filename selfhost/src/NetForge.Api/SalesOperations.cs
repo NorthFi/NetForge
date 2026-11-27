@@ -253,7 +253,7 @@ public static class SalesOperations
     {
         if(!Staff(ctx))return Denied();
         var note=Clean(input.Note);
-        if(!input.Confirm||input.Day.Year is <2000 or >2100||note.Length>1000)return Invalid("Confirm technician and planning date");
+        if(!input.Confirm||input.Day.Year is <2000 or >2100||note.Length>940)return Invalid("Confirm technician, planning date and a note of at most 940 characters");
         await using var conn=await db.OpenConnectionAsync();await using var tx=await conn.BeginTransactionAsync();
         var rows=await Order(conn,tx,id);if(rows.Count!=1)return Results.NotFound();
         var o=rows[0];
@@ -266,7 +266,8 @@ public static class SalesOperations
             return Conflict("Technician must be enabled and assigned to this branch");
         await NetworkManagement.Execute(conn,tx,"UPDATE installation_orders SET state='scheduled',scheduled_day=@day,technician_id=@user WHERE id=@id",
             P("day",input.Day),P("user",input.TechnicianId),P("id",id));
-        await Event(conn,tx,ctx,id,"scheduled",input.Day.ToString("yyyy-MM-dd")+" / "+input.TechnicianId+" "+note);
+        // Reserve space for the structured date and assignment in the event note.
+        await Event(conn,tx,ctx,id,"scheduled",input.Day.ToString("yyyy-MM-dd",System.Globalization.CultureInfo.InvariantCulture)+" / "+input.TechnicianId+" "+note);
         await tx.CommitAsync();return Results.Ok(new{ok=true});
     }
     private static async Task<IResult> Transition(Guid id,HttpContext ctx,NpgsqlDataSource db,InstallStateInput input)

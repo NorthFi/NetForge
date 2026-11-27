@@ -8,6 +8,11 @@ api POST "/sales/leads/$LEAD/state" '{"state":"qualified","confirm":true}' 200
 api POST "/sales/leads/$LEAD/quotes" "{\"packageId\":\"$PACKAGE\",\"installationPrice\":500,\"validDays\":14,\"terms\":\"CI commercial terms\",\"confirm\":true}" 201
 QUOTE="$(id)"
 api POST "/sales/leads/$LEAD/quotes" "{\"packageId\":\"$PACKAGE\",\"installationPrice\":600,\"validDays\":14,\"terms\":\"CI duplicate\",\"confirm\":true}" 409
+# A changed live package must not overwrite the issued quotation or silently
+# convert at a different tariff. Restore the disposable fixture immediately.
+docker exec "$PGCONTAINER" psql -U netforge_ci -d netforge_ci -v ON_ERROR_STOP=1 -c "UPDATE packages SET monthly_price=monthly_price+1 WHERE id='$PACKAGE'" >/dev/null
+api POST "/sales/leads/$LEAD/quotes/$QUOTE/accept" '{"account":"CI-PRICE-CHANGED","acceptedByName":"CI customer","evidenceReference":"CI signed quote","confirm":true}' 409
+docker exec "$PGCONTAINER" psql -U netforge_ci -d netforge_ci -v ON_ERROR_STOP=1 -c "UPDATE packages SET monthly_price=monthly_price-1 WHERE id='$PACKAGE'" >/dev/null
 # Force an existing-account collision; everything must roll back.
 EXISTING_ACCOUNT="$(docker exec "$PGCONTAINER" psql -U netforge_ci -d netforge_ci -Atqc 'SELECT account FROM customers ORDER BY account LIMIT 1')"
 PAYLOAD="$(python3 -c 'import json,sys;print(json.dumps(dict(account=sys.argv[1],acceptedByName="CI customer",evidenceReference="CI signed quote",confirm=True)))' "$EXISTING_ACCOUNT")"
@@ -28,8 +33,32 @@ api PUT "/installations/roster/$BRANCH" "{\"userId\":\"$INSTALL_TECH\",\"enabled
 api POST "/installations/orders/$INSTALL/state" '{"state":"completed","note":"Invalid transition","confirm":true}' 409
 api GET "/installations/orders?branch=$BRANCH&day=$DAY" "" 200
 grep -q 'CI-ONBOARD-022' "$BASE/result.json"
+# A second accepted lead remains unassigned and must not appear in a
+# technician's work list. Exercise the real cookie/CSRF authorization path.
+api POST /sales/leads "{\"firstName\":\"CI Other\",\"phone\":\"0120000000\",\"address\":\"Unassigned test installation\",\"branchId\":\"$BRANCH\"}" 201
+OTHER_LEAD="$(id)"
+api POST "/sales/leads/$OTHER_LEAD/state" '{"state":"qualified","confirm":true}' 200
+api POST "/sales/leads/$OTHER_LEAD/quotes" "{\"packageId\":\"$PACKAGE\",\"installationPrice\":0,\"validDays\":14,\"terms\":\"CI second quote\",\"confirm\":true}" 201
+OTHER_QUOTE="$(id)"
+api POST "/sales/leads/$OTHER_LEAD/quotes/$OTHER_QUOTE/accept" '{"account":"CI-ONBOARD-OTHER","acceptedByName":"CI other","evidenceReference":"CI signed quote","confirm":true}' 201
+OTHER_INSTALL="$(id)"
+SALES_ADMIN_COOKIE="$COOKIE"; SALES_ADMIN_CSRF="$CSRF"
+LOGIN_CODE="$(curl -sS -D "$BASE/install-tech.headers" -o "$BASE/result.json" -w '%{http_code}' -H 'Content-Type: application/json' --data '{"username":"ci-install-tech","password":"ci_install_unique_password_2026"}' "$BASEURL/api/login")"
+test "$LOGIN_CODE" = 200
+COOKIE="$(grep -i '^set-cookie: NetForge.Auth=' "$BASE/install-tech.headers" | head -1 | sed -E 's/^[^:]*: ([^;]*).*/\1/' | tr -d '\r')"
+CSRF="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["csrf"])' "$BASE/result.json")"
+api GET /sales/leads "" 403
+api GET /installations/orders "" 200
+python3 - "$BASE/result.json" "$INSTALL" <<'PY'
+import json,sys
+rows=json.load(open(sys.argv[1]))
+assert [r["id"] for r in rows]==[sys.argv[2]],rows
+PY
+api POST "/installations/orders/$OTHER_INSTALL/state" '{"state":"cancelled","note":"Unauthorized attempt","confirm":true}' 403
+api POST "/installations/orders/$INSTALL/schedule" "{\"technicianId\":\"$INSTALL_TECH\",\"day\":\"$DAY\",\"confirm\":true}" 403
 api POST "/installations/orders/$INSTALL/state" '{"state":"in_progress","note":"Work started on site","confirm":true}' 200
 api POST "/installations/orders/$INSTALL/state" '{"state":"completed","note":"Installation verified manually","confirm":true}' 200
+COOKIE="$SALES_ADMIN_COOKIE"; CSRF="$SALES_ADMIN_CSRF"
 api GET "/installations/orders/$INSTALL/events" "" 200
 grep -q '"action":"completed"' "$BASE/result.json"
 api PUT "/installations/roster/$BRANCH" "{\"userId\":\"$INSTALL_TECH\",\"enabled\":false,\"confirm\":true}" 200

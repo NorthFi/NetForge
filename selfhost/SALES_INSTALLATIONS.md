@@ -28,7 +28,8 @@ multiple jobs per technician/day are intentional. The planner filters by
 branch/day or unscheduled work. Technicians can view and update only their
 assigned orders within these endpoints. Existing global CRM access policies
 are unchanged, not branch-isolated. Start, block and complete transitions
-require notes. Admin/dispatcher can cancel unstarted/blocked orders. Removing
+require notes. Scheduling notes are limited to 940 characters so the event
+record can also include the date and assigned technician. Admin/dispatcher can cancel unstarted/blocked orders. Removing
 a technician from a branch is blocked while open work is assigned. Staff role
 changes are managed separately; reassign disabled technicians via planner.
 Order history is independent of the linked support ticket, which must be
