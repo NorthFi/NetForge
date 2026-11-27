@@ -152,13 +152,64 @@ public static class Warehouse
                 JOIN app_users u ON u.id=m.actor_id ORDER BY m.id DESC OFFSET @offset LIMIT 100
                 """,P("offset",offset??0)));
         });
+        // Read-only reconciliation: a single SQL snapshot compares balances
+        // with independent movement, reservation and serial evidence. No
+        // automatic repair is attempted; investigate every discrepancy.
+        api.MapGet("/stock/reconciliation",async(HttpContext ctx,NpgsqlDataSource db,int? offset)=>
+        {
+            if(!Staff(ctx))return Denied();
+            if(offset is <0 or >1000000)return Invalid("Invalid offset");
+            return Results.Ok(await Store.Rows(db,"""
+                WITH movement_deltas AS (
+                    SELECT to_warehouse AS warehouse_id,item_id,quantity::bigint AS delta
+                    FROM stock_movements WHERE action IN ('receive','transfer')
+                    UNION ALL
+                    SELECT from_warehouse,item_id,-quantity::bigint
+                    FROM stock_movements WHERE action IN ('transfer','issue')
+                ), ledger AS (
+                    SELECT warehouse_id,item_id,sum(delta)::bigint AS expected_on_hand
+                    FROM movement_deltas GROUP BY warehouse_id,item_id
+                ), reservations AS (
+                    SELECT warehouse_id,item_id,sum(quantity) AS expected_reserved
+                    FROM stock_reservations WHERE state='reserved' GROUP BY warehouse_id,item_id
+                ), serials AS (
+                    SELECT warehouse_id,item_id,count(*) AS serial_on_hand,
+                        count(*) FILTER(WHERE reservation_id IS NOT NULL) AS serial_reserved
+                    FROM stock_serials WHERE warehouse_id IS NOT NULL GROUP BY warehouse_id,item_id
+                ), keys AS (
+                    SELECT warehouse_id,item_id FROM stock_balances
+                    UNION SELECT warehouse_id,item_id FROM ledger
+                    UNION SELECT warehouse_id,item_id FROM reservations
+                    UNION SELECT warehouse_id,item_id FROM serials
+                )
+                SELECT k.warehouse_id,k.item_id,w.name AS warehouse,i.sku,i.serialized,
+                    COALESCE(b.on_hand,0) AS on_hand,COALESCE(b.reserved,0) AS reserved,
+                    COALESCE(l.expected_on_hand,0) AS ledger_on_hand,
+                    COALESCE(r.expected_reserved,0) AS reservation_total,
+                    COALESCE(s.serial_on_hand,0) AS serial_on_hand,
+                    COALESCE(s.serial_reserved,0) AS serial_reserved
+                FROM keys k JOIN stock_items i ON i.id=k.item_id
+                JOIN stock_warehouses w ON w.id=k.warehouse_id
+                LEFT JOIN stock_balances b ON b.warehouse_id=k.warehouse_id AND b.item_id=k.item_id
+                LEFT JOIN ledger l ON l.warehouse_id=k.warehouse_id AND l.item_id=k.item_id
+                LEFT JOIN reservations r ON r.warehouse_id=k.warehouse_id AND r.item_id=k.item_id
+                LEFT JOIN serials s ON s.warehouse_id=k.warehouse_id AND s.item_id=k.item_id
+                WHERE b.warehouse_id IS NULL
+                   OR b.on_hand<>COALESCE(l.expected_on_hand,0)
+                   OR b.reserved<>COALESCE(r.expected_reserved,0)
+                   OR (i.serialized AND (b.on_hand<>COALESCE(s.serial_on_hand,0)
+                     OR b.reserved<>COALESCE(s.serial_reserved,0)))
+                   OR (NOT i.serialized AND COALESCE(s.serial_on_hand,0)<>0)
+                ORDER BY w.name,i.sku,k.warehouse_id OFFSET @offset LIMIT 100
+                """,P("offset",offset??0)));
+        });
         api.MapGet("/stock/reservations",async(HttpContext ctx,NpgsqlDataSource db,Guid? order,int? offset)=>
         {
             if(!Staff(ctx))return Denied();
             if(offset is <0 or >1000000)return Invalid("Invalid offset");
             return Results.Ok(await Store.Rows(db,"""
                 SELECT r.*,o.number AS order_number,i.sku,w.name AS warehouse,
-                    ARRAY(SELECT s.serial FROM stock_serials s WHERE s.reservation_id=r.id ORDER BY s.serial) AS serials
+                    COALESCE((SELECT m.serials FROM stock_movements m WHERE m.request_id=r.id AND m.action='reserve'),'{}'::text[]) AS serials
                 FROM stock_reservations r JOIN installation_orders o ON o.id=r.order_id
                 JOIN stock_items i ON i.id=r.item_id JOIN stock_warehouses w ON w.id=r.warehouse_id
                 WHERE (@o::uuid IS NULL OR r.order_id=@o) ORDER BY r.created_at DESC,r.id OFFSET @offset LIMIT 100

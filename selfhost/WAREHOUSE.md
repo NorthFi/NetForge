@@ -18,7 +18,11 @@ Catalogue and warehouse selectors are limited to the first 2000 records;
 installation reservation picker uses the first 100 orders; API supports
 explicit order IDs. Balances, serials and movement logs are paginated.
 Low-stock flags apply to existing warehouse/item balances, not every possible
-catalogue/warehouse combination.
+catalogue/warehouse combination. Reconciliation compares the current balance
+against movement-derived stock, active reservations and serial counts in one
+database snapshot. It flags discrepancies but never repairs records or proves
+that physical stock matches the system. Historical reservation serials remain
+visible from the immutable reserve movement.
 
 Reserve stock for an open installation from its own branch. Technician
 warehouse stock requires the assigned technician. Reserved stock is still

@@ -41,4 +41,17 @@ docker exec "$PGCONTAINER" psql -U netforge_ci -d netforge_ci -Atqc "SELECT on_h
 docker exec "$PGCONTAINER" psql -U netforge_ci -d netforge_ci -Atqc "SELECT count(*) FROM equipment e JOIN customers c ON c.id=e.customer_id WHERE e.serial_number='CI-001' AND c.account='CI-ONBOARD-OTHER'" | grep -qx 1
 api GET /stock/movements "" 200
 grep -q '"action":"issue"' "$BASE/result.json"
+api GET /stock/reconciliation "" 200
+python3 -c 'import json,sys;assert json.load(open(sys.argv[1]))==[]' "$BASE/result.json"
+# Simulate an out-of-band quantity discrepancy in the disposable database.
+docker exec "$PGCONTAINER" psql -U netforge_ci -d netforge_ci -v ON_ERROR_STOP=1 -c "UPDATE stock_balances SET on_hand=on_hand+1 WHERE warehouse_id='$ST_MAIN' AND item_id='$ST_BULK'" >/dev/null
+api GET /stock/reconciliation "" 200
+python3 - "$BASE/result.json" "$ST_BULK" <<'PY'
+import json,sys
+r=json.load(open(sys.argv[1]))
+assert len(r)==1 and r[0]["item_id"]==sys.argv[2] and r[0]["on_hand"]==101 and r[0]["ledger_on_hand"]==100,r
+PY
+docker exec "$PGCONTAINER" psql -U netforge_ci -d netforge_ci -v ON_ERROR_STOP=1 -c "UPDATE stock_balances SET on_hand=on_hand-1 WHERE warehouse_id='$ST_MAIN' AND item_id='$ST_BULK'" >/dev/null
+api GET /stock/reconciliation "" 200
+python3 -c 'import json,sys;assert json.load(open(sys.argv[1]))==[]' "$BASE/result.json"
 echo "Warehouse stock smoke passed."

@@ -22,7 +22,7 @@ async function warehouseConsole(el){
  async function setup(){
   [items,warehouses]=await Promise.all([api('/stock/items'),api('/stock/warehouses')]);
   if(!main.isConnected)return;
-  actions.innerHTML='<div class="buttons">'+(admin?'<button id="st-item">+ Item</button><button id="st-warehouse">+ Warehouse / tech stock</button>':'')+'<button id="st-receive">Receive</button><button id="st-transfer">Transfer</button><button id="st-reserve">Reserve for installation</button></div><div class="buttons"><select id="st-view"><option value="balances">Balances</option><option value="reservations">Reservations</option><option value="movements">Movement history</option><option value="catalogue">Catalogue</option><option value="warehouses">Warehouses</option></select><select id="st-filter"><option value="">All warehouses</option>'+warehouseOptions()+'</select><button id="st-prev">Previous</button><button id="st-next">Next</button></div>';
+  actions.innerHTML='<div class="buttons">'+(admin?'<button id="st-item">+ Item</button><button id="st-warehouse">+ Warehouse / tech stock</button>':'')+'<button id="st-receive">Receive</button><button id="st-transfer">Transfer</button><button id="st-reserve">Reserve for installation</button></div><div class="buttons"><select id="st-view"><option value="balances">Balances</option><option value="reservations">Reservations</option><option value="movements">Movement history</option><option value="reconciliation">Reconciliation</option><option value="catalogue">Catalogue</option><option value="warehouses">Warehouses</option></select><select id="st-filter"><option value="">All warehouses</option>'+warehouseOptions()+'</select><button id="st-prev">Previous</button><button id="st-next">Next</button></div>';
   actions.querySelector('#st-view').value=view;actions.querySelector('#st-filter').value=warehouse;
   actions.querySelector('#st-view').onchange=e=>{view=e.target.value;offset=0;load().catch(fail)};
   actions.querySelector('#st-filter').onchange=e=>{warehouse=e.target.value;offset=0;load().catch(fail)};
@@ -57,7 +57,7 @@ async function warehouseConsole(el){
  }
  async function load(){
   const n=++sequence;detail.innerHTML='';
-  const paged=['balances','reservations','movements'].includes(view);let rows=[];
+  const paged=['balances','reservations','movements','reconciliation'].includes(view);let rows=[];
   if(paged){const p=new URLSearchParams({offset:String(offset)});if(view==='balances'&&warehouse)p.set('warehouse',warehouse);rows=await api('/stock/'+view+'?'+p)}else rows=view==='catalogue'?items:warehouses;
   if(!main.isConnected||n!==sequence)return;
   actions.querySelector('#st-filter').disabled=view!=='balances';actions.querySelector('#st-prev').disabled=!paged||offset===0;actions.querySelector('#st-next').disabled=!paged||rows.length<100;
@@ -67,6 +67,8 @@ async function warehouseConsole(el){
    main.innerHTML=table(['Installation','SKU','Warehouse','Qty','State','Serials',''],rows.map(r=>[...vals(r.order_number,r.sku,r.warehouse,r.quantity,r.state,(r.serials||[]).join(', ')),r.state==='reserved'?'<button data-release="'+esc(r.id)+'">Release</button><button data-issue="'+esc(r.id)+'">Issue</button>':'']));
   }else if(view==='movements'){
    main.innerHTML=table(['Time','Action','SKU','From','To','Qty','Serials','Reference','Actor'],rows.map(r=>vals(r.created_at,r.action,r.sku,r.from_name,r.to_name,r.quantity,(r.serials||[]).join(', '),r.reference,r.username)));
+  }else if(view==='reconciliation'){
+   main.innerHTML='<p class="note">'+(rows.length?'Discrepancies detected. Investigate; no automatic repair.':offset===0?'No balance discrepancies found in the current database snapshot.':'No further discrepancies.')+'</p>'+table(['Warehouse','SKU','On hand','Ledger on hand','Reserved','Reservation total','Serial on hand','Serial reserved'],rows.map(r=>vals(r.warehouse,r.sku,r.on_hand,r.ledger_on_hand,r.reserved,r.reservation_total,r.serial_on_hand,r.serial_reserved)));
   }else if(view==='catalogue'){
    main.innerHTML=table(['SKU','Name','Model','Unit','Tracking','Minimum',''],rows.map(r=>[...vals(r.sku,r.name,r.model,r.unit,r.serialized?'Serialized':'Bulk',r.min_available),r.serialized?'<button data-serial="'+esc(r.id)+'">Serials</button>':'']));
   }else main.innerHTML=table(['Warehouse','Branch','Technician'],rows.map(r=>vals(r.name,r.branch,r.technician)));
