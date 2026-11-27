@@ -266,6 +266,20 @@ modules. Review the [SLA approval and CPE management runbook](selfhost/SLA_CREDI
 - New checks default **OFF**. No automated SLA refunds, cash
   transfers, customer notifications or RADIUS changes.
 
+## Phase 11: Subscriber-side probe agents
+
+The **Subscriber Probes** staff module enrolls authorized Linux hosts on
+subscriber networks to measure system DNS resolution and TLS-verified
+HTTPS response status. See the [deployment and evidence runbook](selfhost/SUBSCRIBER_PROBES.md).
+
+- Push-only, scoped credentials with revocation, rotation, replay
+  protection, bounded ingestion and no remote control.
+- Standard-library Python one-shot agent and restricted systemd units.
+- Multi-vantage service evidence alongside independently aged CPE
+  management and RADIUS accounting signals.
+- Missing samples remain **unknown**; no probe generates contractual
+  downtime, subscriber credits, customer messages or RADIUS changes.
+
 ## Current capabilities
 
 - Staff login with PBKDF2 password hashes, cookie authentication, role checks and request CSRF tokens.
