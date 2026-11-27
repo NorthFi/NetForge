@@ -41,6 +41,9 @@ maintenance enforcement outside NetForge, rollback verification, automatic
 output collection or execution scheduling. An interrupted HTTP response
 after handoff can leave a target outstanding; review the pinned version and
 record a conservative failure if execution cannot be verified. If the
-operator account is unavailable, do not bypass the workflow using SQL;
-resolve with an authorized incident response process. State is deliberately
-conservative. Run the CI suite and test with lab devices before production.
+operator account is unavailable, a different administrator can mark the
+outstanding target uncertain and halt the plan, but cannot claim success.
+Migration 019 prevents simultaneous outstanding handoffs for the same
+backup profile across plans. It does not detect duplicate inventory profiles
+representing one physical device. Resolve uncertain device state before
+starting another change. State is deliberately conservative. Run the CI suite and test with lab devices before production.

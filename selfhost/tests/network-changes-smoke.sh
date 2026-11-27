@@ -35,6 +35,15 @@ api POST "/changes/plans/$PLAN_ID/targets/$T1/handoff" '{"confirm":true}' 200
 grep -q '/system identity print' "$BASE/result.json"
 if grep -q '/system resource print' "$BASE/result.json"; then exit 1; fi
 api POST "/changes/plans/$PLAN_ID/targets/$T2/handoff" '{"confirm":true}' 409
+# A second independently approved plan cannot take the same device.
+api POST /changes/plans "{\"versionId\":\"$REV2\",\"groupId\":\"$GROUP\",\"canaryProfileId\":\"$VAULT\",\"reason\":\"CI overlapping handoff\",\"windowStart\":\"$START\",\"windowEnd\":\"$END\",\"confirm\":true}" 201
+OVERLAP="$(id)"
+api GET "/changes/plans/$OVERLAP/targets" "" 200
+OVERLAP_TARGET="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[0]["id"])' "$BASE/result.json")"
+COOKIE="$APPROVER_COOKIE"; CSRF="$APPROVER_CSRF"
+api POST "/changes/plans/$OVERLAP/approve" '{"confirm":true}' 200
+COOKIE="$CHANGE_COOKIE"; CSRF="$CHANGE_CSRF"
+api POST "/changes/plans/$OVERLAP/targets/$OVERLAP_TARGET/handoff" '{"confirm":true}' 409
 api POST "/changes/plans/$PLAN_ID/targets/$T1/outcome" '{"success":true,"note":"Verified canary manually","confirm":true}' 200
 api POST "/changes/plans/$PLAN_ID/targets/$T2/handoff" '{"confirm":true}' 409
 # A fresh backup allows the next target. No network command is ever sent.
@@ -44,4 +53,14 @@ api POST "/changes/plans/$PLAN_ID/targets/$T2/handoff" '{"confirm":true}' 200
 api POST "/changes/plans/$PLAN_ID/targets/$T2/outcome" '{"success":false,"note":"Operator reported uncertainty","confirm":true}' 200
 grep -q '"state":"halted"' "$BASE/result.json"
 api POST "/changes/plans/$PLAN_ID/targets/$T2/handoff" '{"confirm":true}' 409
+# Another admin may resolve uncertainty, but may not report success on behalf
+# of the original operator. Once the original handoff is resolved, the
+# independent plan can proceed.
+api POST "/changes/plans/$OVERLAP/targets/$OVERLAP_TARGET/handoff" '{"confirm":true}' 200
+api POST "/changes/plans/$OVERLAP/targets/$OVERLAP_TARGET/abandon" '{"success":false,"note":"Operator not available","confirm":true}' 409
+COOKIE="$APPROVER_COOKIE"; CSRF="$APPROVER_CSRF"
+api POST "/changes/plans/$OVERLAP/targets/$OVERLAP_TARGET/outcome" '{"success":true,"note":"Cannot verify operator outcome","confirm":true}' 409
+api POST "/changes/plans/$OVERLAP/targets/$OVERLAP_TARGET/abandon" '{"success":false,"note":"Operator not available","confirm":true}' 200
+grep -q '"state":"halted"' "$BASE/result.json"
+COOKIE="$CHANGE_COOKIE"; CSRF="$CHANGE_CSRF"
 echo "Network change control smoke passed."

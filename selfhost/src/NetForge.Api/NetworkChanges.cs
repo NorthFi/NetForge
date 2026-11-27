@@ -240,6 +240,7 @@ public static class NetworkChanges
         });
         api.MapPost("/changes/plans/{id:guid}/targets/{target:guid}/handoff",Handoff);
         api.MapPost("/changes/plans/{id:guid}/targets/{target:guid}/outcome",Outcome);
+        api.MapPost("/changes/plans/{id:guid}/targets/{target:guid}/abandon",Abandon);
     }
 
     private static async Task<bool> SetMembers(NpgsqlConnection conn,NpgsqlTransaction tx,Guid id,Guid[] ids)
@@ -279,6 +280,13 @@ public static class NetworkChanges
         if(next.Count!=1||(Guid)next[0]["id"]! !=target||next[0]["state"] as string!="pending")
             return Conflict("Only the next pending target can be handed off; record any outstanding outcome");
         var profile=(Guid)next[0]["profile_id"]!;
+        // Serialize cross-plan handoffs for this inventory profile. The partial
+        // unique index remains the final guard if another writer bypasses this path.
+        await NetworkManagement.Query(conn,tx,"SELECT id FROM backup_profiles WHERE id=@id FOR UPDATE",P("id",profile));
+        var outstanding=await NetworkManagement.Query(conn,tx,"""
+            SELECT id FROM network_change_targets WHERE profile_id=@profile AND state='handed_off' LIMIT 1
+            """,P("profile",profile));
+        if(outstanding.Count!=0)return Conflict("Another plan has an outstanding handoff for this device");
         var backups=await NetworkManagement.Query(conn,tx,"""
             SELECT id,size_bytes,sha256,ciphertext FROM backup_versions
             WHERE profile_id=@profile AND created_at>=now()-interval '24 hours'
@@ -310,6 +318,31 @@ public static class NetworkChanges
         return Results.Ok(new{body,backupId,versionId=version,sha256=((string)scripts[0]["sha256"]!).Trim(),
             note="Manual handoff only. Verify target identity and rollback procedure. NetForge has not executed this script."});
     }
+    // Emergency recovery when the original operator cannot report the outcome.
+    // A different admin can only mark the result uncertain and halt the plan;
+    // this can never be used to report success or resume later targets.
+    private static async Task<IResult> Abandon(Guid id,Guid target,HttpContext ctx,NpgsqlDataSource db,NetworkOutcome input)
+    {
+        if(!Admin(ctx))return Denied();
+        var note=(input.Note??"").Trim();
+        if(!input.Confirm||input.Success||note.Length is <5 or >500)
+            return Invalid("Confirm an uncertain outcome with a reason (5–500 characters)");
+        await using var conn=await db.OpenConnectionAsync();
+        await using var tx=await conn.BeginTransactionAsync();
+        var plans=await Plan(conn,tx,id);if(plans.Count==0)return Results.NotFound();
+        if(plans[0]["state"] as string!="running")return Conflict("Plan is not running");
+        var changed=await NetworkManagement.Query(conn,tx,"""
+            UPDATE network_change_targets SET state='failed',outcome_note=@note,completed_at=now()
+            WHERE id=@target AND plan_id=@id AND state='handed_off' AND operator_id<>@actor
+            RETURNING id
+            """,P("note",note),P("target",target),P("id",id),P("actor",UserId(ctx)));
+        if(changed.Count!=1)return Conflict("A different administrator must resolve the outstanding handoff");
+        await NetworkManagement.Execute(conn,tx,"UPDATE network_change_plans SET state='halted' WHERE id=@id",P("id",id));
+        await NetworkManagement.Audit(conn,tx,Actor(ctx),"network-target-abandon","network_target",target.ToString());
+        await tx.CommitAsync();
+        return Results.Ok(new{state="halted"});
+    }
+
     private static async Task<IResult> Outcome(Guid id,Guid target,HttpContext ctx,NpgsqlDataSource db,NetworkOutcome input)
     {
         if(!Admin(ctx))return Denied();
