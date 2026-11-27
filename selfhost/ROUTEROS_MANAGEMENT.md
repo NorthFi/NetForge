@@ -17,7 +17,7 @@ further with egress firewall rules; the application permits explicitly
 enrolled HTTPS ports 1–65535. Never use broad public ranges. Restart the API
 after changing its environment.
 
-On RouterOS v7, provision a dedicated account whose group has only read and
+On RouterOS v7, provision a dedicated account whose group has only read, api and
 rest-api policies (verify on the actual firmware), and restrict its address
 to the actual NetForge egress source. Enable www-ssl with a valid certificate,
 disable plain HTTP if not needed, and restrict the service and input chain

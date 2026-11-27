@@ -1,0 +1,17 @@
+# root/selfhost/backup-agent/netforge-backup@.service
+[Unit]
+Description=NetForge configuration backup collector (%i)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=netforge-backup
+Group=netforge-backup
+ExecStart=/usr/bin/python3 /opt/netforge/backup-agent/netforge_backup.py /etc/netforge/backup/%i.json
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+TimeoutStartSec=150
