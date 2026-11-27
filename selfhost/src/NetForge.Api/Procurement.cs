@@ -244,7 +244,7 @@ public static class Procurement
         if(!Warehouse.ValidSerials((bool)item["serialized"]!,input.Quantity,serials))return Invalid("Invalid serial selection");
         if(!await Warehouse.HasAvailable(c,t,input.WarehouseId,input.ItemId,input.Quantity)||
            !await Warehouse.AvailableSerials(c,t,input.WarehouseId,input.ItemId,serials))return Conflict("Insufficient available stock or unavailable serials");
-        if(serials.Length>0&&(await Q(c,t,"SELECT id FROM equipment WHERE upper(serial_number)=ANY(@s) LIMIT 1",P("s",serials))).Count!=0)
+        if(serials.Length>0&&(await Q(c,t,"SELECT id FROM equipment WHERE recovered_at IS NULL AND upper(serial_number)=ANY(@s) LIMIT 1",P("s",serials))).Count!=0)
             return Conflict("An existing equipment asset has one of these serials");
         await NetworkManagement.Execute(c,t,"UPDATE stock_balances SET on_hand=on_hand-@qty WHERE warehouse_id=@w AND item_id=@i",
             P("qty",input.Quantity),P("w",input.WarehouseId),P("i",input.ItemId));

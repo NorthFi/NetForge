@@ -186,7 +186,7 @@ public static class Endpoints
                        e.category,e.name,e.model,e.management_ip::text AS management_ip,
                        e.serial_number,e.ownership,e.created_at
                 FROM equipment e LEFT JOIN customers c ON c.id=e.customer_id
-                LEFT JOIN highsites h ON h.id=e.highsite_id ORDER BY e.created_at DESC
+                LEFT JOIN highsites h ON h.id=e.highsite_id WHERE e.recovered_at IS NULL ORDER BY e.created_at DESC
                 LIMIT 10000
                 """)));
         api.MapPost("/equipment",async (HttpContext ctx,NpgsqlDataSource db,EquipmentInput body) =>

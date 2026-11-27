@@ -135,7 +135,8 @@ public static class Warehouse
             if(!Staff(ctx))return Denied();
             if(offset is <0 or >1000000)return Invalid("Invalid offset");
             return Results.Ok(await Store.Rows(db,"""
-                SELECT s.id,s.serial,s.warehouse_id,s.reservation_id,s.equipment_id,w.name AS warehouse
+                SELECT s.id,s.serial,s.warehouse_id,s.reservation_id,s.equipment_id,s.condition,w.name AS warehouse,
+                    (SELECT r.state FROM equipment_recoveries r WHERE r.equipment_id=s.equipment_id) AS recovery_state
                 FROM stock_serials s LEFT JOIN stock_warehouses w ON w.id=s.warehouse_id
                 WHERE s.item_id=@i AND (@w::uuid IS NULL OR s.warehouse_id=@w)
                 ORDER BY s.serial OFFSET @offset LIMIT 100
@@ -326,7 +327,7 @@ public static class Warehouse
         {
             // Refuse a known pre-existing equipment serial instead of silently
             // duplicating an asset. Existing manually managed assets remain separate.
-            if(serials.Length>0&&(await Query(c,t,"SELECT id FROM equipment WHERE upper(serial_number)=ANY(@s) LIMIT 1",P("s",serials))).Count!=0)
+            if(serials.Length>0&&(await Query(c,t,"SELECT id FROM equipment WHERE recovered_at IS NULL AND upper(serial_number)=ANY(@s) LIMIT 1",P("s",serials))).Count!=0)
                 return Conflict("An equipment asset already has one of these serial numbers");
             foreach(var unit in units)
             {
