@@ -52,6 +52,7 @@ builder.Services.AddHostedService<TelemetryRetentionWorker>();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
+    options.AddConcurrencyLimiter("execution-agent", limiter=>{limiter.PermitLimit=8;limiter.QueueLimit=0;});
     options.AddConcurrencyLimiter("backup-upload", limiter=>{limiter.PermitLimit=4;limiter.QueueLimit=0;});
     options.AddConcurrencyLimiter("routeros-read", limiter=>{limiter.PermitLimit=4;limiter.QueueLimit=0;});
     options.AddConcurrencyLimiter("probe-ingest", limiter => { limiter.PermitLimit=32; limiter.QueueLimit=0; });
@@ -173,6 +174,7 @@ Ipam.Map(authorized);
 RouterOsInventory.Map(authorized);
 BackupVault.Map(authorized,app);
 NetworkChanges.Map(authorized);
+NetworkExecution.Map(authorized,app);
 NetworkManagement.Map(authorized);
 ServiceLifecycle.Map(authorized);
 CustomerPortal.MapStaff(authorized);

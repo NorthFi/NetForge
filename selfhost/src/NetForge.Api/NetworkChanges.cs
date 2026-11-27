@@ -1,5 +1,5 @@
 // root/selfhost/src/NetForge.Api/NetworkChanges.cs
-// Human-executed network changes. No transport, command runner or automatic
+// Human-executed changes and explicit device-agent handoffs. No automatic
 // restore. Independent approval, frozen targets and backup gates are enforced
 // server-side, under a plan row lock, not just by browser controls.
 using System.Security.Claims;
@@ -16,7 +16,7 @@ public sealed record NetworkGroupInput(string Name,Guid[] ProfileIds);
 public sealed record NetworkMembersInput(Guid[] ProfileIds,bool Confirm);
 public sealed record NetworkPlanInput(Guid VersionId,Guid GroupId,Guid CanaryProfileId,
     string Reason,DateTimeOffset WindowStart,DateTimeOffset WindowEnd,bool Confirm);
-public sealed record NetworkChangeConfirm(bool Confirm);
+public sealed record NetworkChangeConfirm(bool Confirm,bool Automatic=false);
 public sealed record NetworkOutcome(bool Success,string Note,bool Confirm);
 
 public static class NetworkChanges
@@ -163,9 +163,14 @@ public static class NetworkChanges
             if(!Staff(ctx))return Denied();
             return Results.Ok(await Store.Rows(db,"""
                 SELECT t.id,t.profile_id,p.name,p.vendor,t.ordinal,t.state,t.backup_id,
-                   t.handed_off_at,t.completed_at,t.outcome_note,u.username AS operator
+                   t.handed_off_at,t.completed_at,t.outcome_note,u.username AS operator,
+                   j.state AS execution_state,j.result AS execution_result,j.output_bytes,j.exit_code,
+                   j.deadline,j.queued_at,a.enabled AS agent_enabled
                 FROM network_change_targets t JOIN backup_profiles p ON p.id=t.profile_id
-                LEFT JOIN app_users u ON u.id=t.operator_id WHERE t.plan_id=@id ORDER BY t.ordinal
+                LEFT JOIN app_users u ON u.id=t.operator_id
+                LEFT JOIN network_execution_jobs j ON j.target_id=t.id
+                LEFT JOIN network_execution_agents a ON a.profile_id=t.profile_id
+                WHERE t.plan_id=@id ORDER BY t.ordinal
                 """,P("id",id)));
         });
         api.MapPost("/changes/plans",async(HttpContext ctx,NpgsqlDataSource db,NetworkPlanInput input)=>
@@ -308,13 +313,19 @@ public static class NetworkChanges
         var scripts=await NetworkManagement.Query(conn,tx,"SELECT ciphertext,sha256 FROM network_script_versions WHERE id=@id",P("id",version));
         var body=Read(dp,version,scripts.Single());
         if(body is null)return Conflict("Script integrity or encryption key validation failed");
+        if(input.Automatic&&(!NetworkExecution.ValidBody(body)||!await NetworkExecution.Ready(conn,tx,profile)||
+            (DateTime)p["window_end"]!<DateTime.UtcNow.AddMinutes(2)))
+            return Conflict("Automatic execution requires an enabled RouterOS agent, a single-line ASCII command and at least two minutes in the window");
         await NetworkManagement.Execute(conn,tx,"""
             UPDATE network_change_targets SET state='handed_off',backup_id=@backup,operator_id=@actor,handed_off_at=now() WHERE id=@target
             """,P("backup",backupId),P("actor",UserId(ctx)),P("target",target));
         await NetworkManagement.Execute(conn,tx,"UPDATE network_change_plans SET state='running' WHERE id=@id",P("id",id));
-        await NetworkManagement.Audit(conn,tx,Actor(ctx),"network-target-handoff","network_target",target.ToString());
+        if(input.Automatic)
+            await NetworkManagement.Execute(conn,tx,"INSERT INTO network_execution_jobs(target_id) VALUES(@id)",P("id",target));
+        await NetworkManagement.Audit(conn,tx,Actor(ctx),input.Automatic?"network-target-queue":"network-target-handoff","network_target",target.ToString());
         await tx.CommitAsync();
         ctx.Response.Headers.CacheControl="no-store";
+        if(input.Automatic)return Results.Ok(new{queued=true,backupId,versionId=version,note="Agent must claim within five minutes. No automatic retry."});
         return Results.Ok(new{body,backupId,versionId=version,sha256=((string)scripts[0]["sha256"]!).Trim(),
             note="Manual handoff only. Verify target identity and rollback procedure. NetForge has not executed this script."});
     }
@@ -337,6 +348,13 @@ public static class NetworkChanges
             RETURNING id
             """,P("note",note),P("target",target),P("id",id),P("actor",UserId(ctx)));
         if(changed.Count!=1)return Conflict("A different administrator must resolve the outstanding handoff");
+        var jobs=await NetworkManagement.Query(conn,tx,"SELECT state,deadline FROM network_execution_jobs WHERE target_id=@id FOR UPDATE",P("id",target));
+        if(jobs.Count==1)
+        {
+            if(jobs[0]["state"] as string=="claimed"&&(DateTime)jobs[0]["deadline"]!>DateTime.UtcNow.AddMinutes(-2))
+                return Conflict("Wait until two minutes after the claim deadline and verify device state before resolving");
+            await NetworkManagement.Execute(conn,tx,"UPDATE network_execution_jobs SET state='cancelled' WHERE target_id=@id AND state IN ('queued','claimed')",P("id",target));
+        }
         await NetworkManagement.Execute(conn,tx,"UPDATE network_change_plans SET state='halted' WHERE id=@id",P("id",id));
         await NetworkManagement.Audit(conn,tx,Actor(ctx),"network-target-abandon","network_target",target.ToString());
         await tx.CommitAsync();
@@ -352,6 +370,9 @@ public static class NetworkChanges
         await using var tx=await conn.BeginTransactionAsync();
         var plans=await Plan(conn,tx,id);if(plans.Count==0)return Results.NotFound();
         if(plans[0]["state"] as string!="running")return Conflict("Plan is not running");
+        var jobs=await NetworkManagement.Query(conn,tx,"SELECT state,result FROM network_execution_jobs WHERE target_id=@id FOR UPDATE",P("id",target));
+        if(jobs.Count==1&&(jobs[0]["state"] as string!="reported"||(input.Success&&jobs[0]["result"] as string!="exit_zero")))
+            return Conflict("Agent must report before operator verification; a nonzero or uncertain result cannot be marked successful");
         var changed=await NetworkManagement.Query(conn,tx,"""
             UPDATE network_change_targets SET state=@state,outcome_note=@note,completed_at=now()
             WHERE id=@target AND plan_id=@id AND state='handed_off' AND operator_id=@actor RETURNING id

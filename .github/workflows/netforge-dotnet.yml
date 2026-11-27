@@ -71,6 +71,8 @@ jobs:
           bash -n selfhost/tests/routeros-smoke.sh
           bash -n selfhost/tests/backup-smoke.sh
           bash -n selfhost/tests/network-changes-smoke.sh
+          bash -n selfhost/tests/network-execution-smoke.sh
+          python3 -m py_compile selfhost/execution-agent/netforge_execute.py
           python3 -m py_compile selfhost/backup-agent/netforge_backup.py
           bash -n selfhost/tests/snmpv3-wire-smoke.sh
           bash -n selfhost/tests/billing-upgrade-smoke.sh

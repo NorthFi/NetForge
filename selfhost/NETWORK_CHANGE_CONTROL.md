@@ -1,6 +1,8 @@
 <!-- root/selfhost/NETWORK_CHANGE_CONTROL.md -->
 # Network change control (manual execution)
 
+For the opt-in RouterOS agent introduced in migration 020, see [Network execution](NETWORK_EXECUTION.md). The workflow below describes manual handoffs.
+
 Migration 018 adds an encrypted, immutable script library, backup-profile
 device groups, and version-pinned maintenance plans. No remote executor,
 scheduler, SSH command runner or automatic rollback is included. NetForge

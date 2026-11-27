@@ -2,7 +2,7 @@
 'use strict';
 async function networkChangesConsole(el){
  const admin=role==='admin';
- el.insertAdjacentHTML('beforeend','<div class="toolbar"><div><h1>Network change control</h1><p class="sub">Immutable scripts · independent approval · manual execution</p></div><button id="nc-refresh">Refresh</button></div><p class="note">NetForge does not send commands to devices. A handoff releases a reviewed script to an operator. Record the actual outcome; failure halts further handoffs.</p><div id="nc-main"></div><div id="nc-detail"></div>');
+ el.insertAdjacentHTML('beforeend','<div class="toolbar"><div><h1>Network change control</h1><p class="sub">Immutable scripts · independent approval · manual or agent execution</p></div><button id="nc-refresh">Refresh</button></div><p class="note">Manual handoff or explicit queued RouterOS agent execution. Agent results are transport evidence only. Verify the actual device outcome before further handoffs.</p><div id="nc-main"></div><div id="nc-detail"></div>');
  const main=el.querySelector('#nc-main'),detail=el.querySelector('#nc-detail');
  let scripts=[],groups=[],profiles=[],plans=[],selected=null,seq=0;
  const fail=e=>{if(main.isConnected)notice(e.message,true)};
@@ -50,7 +50,7 @@ async function networkChangesConsole(el){
  async function show(){
   const p=selected,n=++seq,path='/changes/plans/'+p.id;
   const targets=await api(path+'/targets');if(n!==seq||!main.isConnected)return;
-  detail.innerHTML='<div class="toolbar topgap"><div><h2>'+esc(p.script)+' · revision '+esc(p.revision)+'</h2><p>'+esc(p.reason)+'</p><p class="sub">'+esc(p.state)+' · '+esc(p.window_start)+' – '+esc(p.window_end)+' · requested by '+esc(p.creator)+' · approved by '+esc(p.approver||'—')+'</p></div>'+(admin?'<div class="buttons"><button id="nc-review">Review script</button>'+(p.state==='pending'?'<button id="nc-approve">Approve</button>':'')+(['pending','approved','running'].includes(p.state)?'<button id="nc-cancel">Cancel plan</button>':'')+'</div>':'')+'</div><div class="card tablewrap"><table><thead><tr><th>Order</th><th>Target</th><th>State</th><th>Backup</th><th>Operator / outcome</th><th></th></tr></thead><tbody>'+targets.map(t=>'<tr><td>'+esc(t.ordinal)+(t.ordinal===1?' · canary':'')+'</td><td>'+esc(t.name)+'</td><td>'+esc(t.state)+'</td><td>'+esc(t.backup_id||'—')+'</td><td>'+esc(t.operator||'')+' '+esc(t.outcome_note||'')+'</td><td>'+(admin&&t.state==='pending'&&['approved','running'].includes(p.state)?'<button data-handoff="'+esc(t.id)+'">Handoff</button>':admin&&t.state==='handed_off'?'<button data-outcome="'+esc(t.id)+'">Record outcome</button><button data-abandon="'+esc(t.id)+'">Resolve uncertain</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
+  detail.innerHTML='<div class="toolbar topgap"><div><h2>'+esc(p.script)+' · revision '+esc(p.revision)+'</h2><p>'+esc(p.reason)+'</p><p class="sub">'+esc(p.state)+' · '+esc(p.window_start)+' – '+esc(p.window_end)+' · requested by '+esc(p.creator)+' · approved by '+esc(p.approver||'—')+'</p></div>'+(admin?'<div class="buttons"><button id="nc-review">Review script</button>'+(p.state==='pending'?'<button id="nc-approve">Approve</button>':'')+(['pending','approved','running'].includes(p.state)?'<button id="nc-cancel">Cancel plan</button>':'')+'</div>':'')+'</div><div class="card tablewrap"><table><thead><tr><th>Order</th><th>Target</th><th>State</th><th>Backup</th><th>Operator / outcome</th><th></th></tr></thead><tbody>'+targets.map(t=>'<tr><td>'+esc(t.ordinal)+(t.ordinal===1?' · canary':'')+'</td><td>'+esc(t.name)+'</td><td>'+esc(t.state)+(t.execution_state?' · '+esc(t.execution_state)+' / '+esc(t.execution_result||'—'):'')+'</td><td>'+esc(t.backup_id||'—')+'</td><td>'+esc(t.operator||'')+' '+esc(t.outcome_note||'')+'</td><td>'+(admin&&t.state==='pending'&&['approved','running'].includes(p.state)?'<button data-handoff="'+esc(t.id)+'">Handoff</button>'+(t.agent_enabled&&t.vendor==='routeros'?'<button data-queue="'+esc(t.id)+'">Queue agent</button>':'')+'':admin&&t.state==='handed_off'?'<button data-outcome="'+esc(t.id)+'">Record outcome</button><button data-abandon="'+esc(t.id)+'">Resolve uncertain</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
   if(!admin)return;
   detail.querySelector('#nc-review').onclick=async()=>{try{showBody('Review plan script',await api('/changes/versions/'+p.version_id+'/review'))}catch(e){fail(e)}};
   const approve=detail.querySelector('#nc-approve');if(approve)approve.onclick=()=>{if(confirm('Independently reviewed this exact revision, targets and window?'))api(path+'/approve','POST',{confirm:true}).then(load).catch(fail)};
@@ -60,6 +60,11 @@ async function networkChangesConsole(el){
    b.disabled=true;
    try{const r=await api(path+'/targets/'+b.dataset.handoff+'/handoff','POST',{confirm:true});showBody('Manual execution handoff',r);await load()}catch(e){fail(e);b.disabled=false}
   });
+  detail.querySelectorAll('[data-queue]').forEach(b=>b.onclick=async()=>{
+   if(!confirm('Queue this approved single-line command for the device-bound SSH agent? This may change live equipment. Verify rollback and local hash allowlist first.'))return;
+   b.disabled=true;
+   try{await api(path+'/targets/'+b.dataset.queue+'/handoff','POST',{confirm:true,automatic:true});await load();notice('Queued; run the agent within five minutes.')}catch(e){fail(e);b.disabled=false}
+  });
   detail.querySelectorAll('[data-abandon]').forEach(b=>b.onclick=()=>form('Resolve uncertain handoff','<p>Only another administrator may resolve this handoff as uncertain. This halts the plan and cannot establish that the device is safe. Verify device state before future changes.</p><label>Incident / reason (no secrets)</label><textarea name="note" required minlength="5" maxlength="500"></textarea>',f=>api(path+'/targets/'+b.dataset.abandon+'/abandon','POST',{success:false,note:f.get('note'),confirm:true})));
   detail.querySelectorAll('[data-outcome]').forEach(b=>b.onclick=()=>form('Record actual execution result','<label>Result</label><select name="result"><option value="success">Succeeded, verified by operator</option><option value="failure">Failed / uncertain (halt plan)</option></select><label>Verification note (no secrets)</label><textarea name="note" minlength="5" maxlength="500" required></textarea>',f=>api(path+'/targets/'+b.dataset.outcome+'/outcome','POST',{success:f.get('result')==='success',note:f.get('note'),confirm:true})));
  }
@@ -67,6 +72,21 @@ async function networkChangesConsole(el){
   [scripts,groups,profiles,plans]=await Promise.all([api('/changes/scripts'),api('/changes/groups'),api('/backups/profiles'),api('/changes/plans')]);
   if(!main.isConnected)return;
   main.innerHTML='<div class="toolbar"><h2>Script library</h2>'+(admin?'<button id="nc-script">+ Script</button>':'')+'</div><div class="card tablewrap"><table><tbody>'+scripts.map(s=>'<tr><td>'+esc(s.name)+'</td><td>'+esc(s.vendor)+'</td><td>'+esc(s.revisions)+' revisions</td><td><button data-script="'+esc(s.id)+'">Versions</button></td></tr>').join('')+'</tbody></table></div><div class="toolbar topgap"><h2>Device groups</h2>'+(admin?'<button id="nc-group">+ Group</button>':'')+'</div><div class="card tablewrap"><table><tbody>'+groups.map(g=>'<tr><td>'+esc(g.name)+'</td><td>'+esc(g.profile_ids.length)+' devices</td><td>'+(admin?'<button data-group="'+esc(g.id)+'">Edit</button>':'')+'</td></tr>').join('')+'</tbody></table></div><div class="toolbar topgap"><h2>Maintenance plans</h2>'+(admin?'<button class="primary" id="nc-plan">+ Plan</button>':'')+'</div><div class="card tablewrap"><table><thead><tr><th>Script</th><th>State</th><th>Window</th><th>Reason</th><th></th></tr></thead><tbody>'+plans.map(p=>'<tr><td>'+esc(p.script)+' r'+esc(p.revision)+'</td><td>'+esc(p.state)+'</td><td>'+esc(p.window_start)+'</td><td>'+esc(p.reason)+'</td><td><button data-plan="'+esc(p.id)+'">Inspect</button></td></tr>').join('')+'</tbody></table></div>';
+  if(admin){
+   const section=document.createElement('div');
+   section.innerHTML='<div class="toolbar topgap"><h2>RouterOS execution agents</h2><button id="nc-agent">Enroll / rotate / revoke</button></div><p class="sub">A separate token and locally pinned SSH identity are required. Tokens never authorize downloads.</p><div id="nc-agents"></div>';
+   main.prepend(section);
+   const agents=await api('/changes/agents');
+   if(!section.isConnected)return;
+   section.querySelector('#nc-agents').innerHTML='<div class="card tablewrap"><table><tbody>'+agents.map(a=>'<tr><td>'+esc(a.name)+'</td><td>'+esc(a.address)+'</td><td>'+esc(a.enabled?'Enabled':'Disabled')+'</td></tr>').join('')+'</tbody></table></div>';
+   section.querySelector('#nc-agent').onclick=()=>{
+    const routers=profiles.filter(p=>p.vendor==='routeros');
+    form('Manage execution agent','<label>RouterOS backup profile</label><select name="profile" required>'+routers.map(p=>option(p.id,p.name)).join('')+'</select><label>Action</label><select name="action"><option value="enable">Issue / rotate token</option><option value="revoke">Revoke token</option></select><p>Confirm only for a device and collector you administer.</p>',async f=>{
+     const r=await api('/changes/agents/'+f.get('profile')+'/token','POST',{enable:f.get('action')==='enable',confirm:true});
+     if(r.token){const d=dialog('<h2>Execution token (shown once)</h2><p>Profile: '+esc(f.get('profile'))+'</p><textarea readonly rows="3">'+esc(r.token)+'</textarea><button id="close">Close</button>');d.querySelector('#close').onclick=()=>d.close()}
+    });
+   };
+  }
   main.querySelectorAll('[data-script]').forEach(b=>b.onclick=()=>library(scripts.find(s=>s.id===b.dataset.script)).catch(fail));
   main.querySelectorAll('[data-group]').forEach(b=>b.onclick=()=>groupForm(groups.find(g=>g.id===b.dataset.group)));
   main.querySelectorAll('[data-plan]').forEach(b=>b.onclick=()=>{selected=plans.find(p=>p.id===b.dataset.plan);show().catch(fail)});
