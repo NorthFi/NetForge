@@ -43,6 +43,7 @@ jobs:
           node --check selfhost/web/assurance-console.js
           node --check selfhost/web/assurance-controls.js
           node --check selfhost/web/subscriber-probes.js
+          node --check selfhost/web/ipam.js
           node --check selfhost/web/portal/app.js
       - name: Validate FreeRADIUS bootstrap shell
         run: sh -n selfhost/radius/entrypoint.sh
@@ -63,6 +64,7 @@ jobs:
           bash -n selfhost/tests/sla-probes-smoke.sh
           bash -n selfhost/tests/subscriber-probes-smoke.sh
           bash -n selfhost/tests/staff-security-smoke.sh
+          bash -n selfhost/tests/ipam-smoke.sh
           bash -n selfhost/tests/snmpv3-wire-smoke.sh
           bash -n selfhost/tests/billing-upgrade-smoke.sh
           bash -n selfhost/tests/radius-smoke.sh

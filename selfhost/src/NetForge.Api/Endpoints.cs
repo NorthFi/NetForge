@@ -233,7 +233,7 @@ public static class Endpoints
         api.MapGet("/services",async (NpgsqlDataSource db) =>
             Results.Ok(await Store.Rows(db,"""
                 SELECT s.id,s.customer_id,c.account,s.package_id,p.name AS package,
-                       s.username,s.state,s.static_ipv4::text AS static_ipv4,
+                       s.username,s.state,host(s.static_ipv4) AS static_ipv4,
                        s.created_at,s.changed_at,s.suspension_reason,s.suspended_at,s.resumed_at,
                        (s.state='active' AND c.status='active' AND
                          EXISTS(SELECT 1 FROM radcheck r WHERE r.username=s.username AND r.attribute='Cleartext-Password') AND
@@ -252,7 +252,7 @@ public static class Endpoints
                 VALUES(@c,@p,@u,@s,@ip::inet) RETURNING id
                 """,Store.P("c",body.CustomerId),Store.P("p",body.PackageId),
                 Store.P("u",body.Username.Trim()),Store.P("s",body.State),
-                Store.P("ip",body.StaticIpv4));
+                Store.P("ip",string.IsNullOrWhiteSpace(body.StaticIpv4)?null:body.StaticIpv4));
             await Store.Audit(db,Actor(ctx),"create","service",id.ToString());
             return Results.Created($"/api/services/{id}",new {id});
         });
@@ -265,7 +265,7 @@ public static class Endpoints
             await using var conn=await db.OpenConnectionAsync();
             await using var tx=await conn.BeginTransactionAsync();
             var rows=await InTransaction(conn,(NpgsqlTransaction)tx,"""
-                SELECT s.username,s.state,s.static_ipv4::text AS ip,c.status AS customer_status,
+                SELECT s.username,s.state,host(s.static_ipv4) AS ip,c.status AS customer_status,
                        p.mikrotik_rate_limit AS rate,p.upload_mbps,p.download_mbps
                 FROM services s JOIN customers c ON c.id=s.customer_id
                 JOIN packages p ON p.id=s.package_id WHERE s.id=@id FOR UPDATE OF s
@@ -482,7 +482,7 @@ public static class Endpoints
         Allowed(x.State,"pending","suspended","cancelled","active") &&
         (string.IsNullOrWhiteSpace(x.StaticIpv4) ||
             (IPAddress.TryParse(x.StaticIpv4,out var address) &&
-             address.AddressFamily==System.Net.Sockets.AddressFamily.InterNetwork));
+             address.AddressFamily==System.Net.Sockets.AddressFamily.InterNetwork && address.ToString()==x.StaticIpv4));
 
     private static async Task<List<Dictionary<string,object?>>> InTransaction(
         NpgsqlConnection connection,NpgsqlTransaction tx,string sql,

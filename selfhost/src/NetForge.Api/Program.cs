@@ -167,6 +167,7 @@ authorized.MapPost("/logout", async (HttpContext ctx,NpgsqlDataSource db) =>
 
 Endpoints.Map(authorized);
 StaffSecurity.Map(authorized);
+Ipam.Map(authorized);
 NetworkManagement.Map(authorized);
 ServiceLifecycle.Map(authorized);
 CustomerPortal.MapStaff(authorized);
