@@ -27,22 +27,22 @@ public static class Warehouse
     private static string Clean(string? s)=>(s??"").Trim();
     private static bool Basic(Guid request,int quantity,string reference,bool confirm)=>
         request!=Guid.Empty&&quantity is >=1 and <=100000&&reference.Length is >=3 and <=240&&confirm;
-    private static string[] Serials(string[]? raw)=>(raw??[]).Select(x=>Clean(x).ToUpperInvariant()).ToArray();
-    private static bool ValidSerials(bool tracked,int qty,string[] serials)=>
+    internal static string[] Serials(string[]? raw)=>(raw??[]).Select(x=>Clean(x).ToUpperInvariant()).ToArray();
+    internal static bool ValidSerials(bool tracked,int qty,string[] serials)=>
         tracked?qty<=100&&serials.Length==qty&&serials.All(s=>s.Length is >=1 and <=160&&s.All(c=>c is >= '!' and <= '~'))&&
         serials.Distinct(StringComparer.Ordinal).Count()==qty:serials.Length==0;
     private static Task<List<Dictionary<string,object?>>> Query(NpgsqlConnection c,NpgsqlTransaction t,string sql,params NpgsqlParameter[] p)=>
         NetworkManagement.Query(c,t,sql,p);
-    private static async Task Lock(NpgsqlConnection c,NpgsqlTransaction t)
+    internal static async Task Lock(NpgsqlConnection c,NpgsqlTransaction t)
     {
         await NetworkManagement.Execute(c,t,"SELECT pg_advisory_xact_lock(3100323)");
     }
-    private static async Task<bool> Replayed(NpgsqlConnection c,NpgsqlTransaction t,Guid id)=>
+    internal static async Task<bool> Replayed(NpgsqlConnection c,NpgsqlTransaction t,Guid id)=>
         (await Query(c,t,"SELECT id FROM stock_movements WHERE request_id=@id",P("id",id))).Count!=0;
-    private static async Task<bool> HasAvailable(NpgsqlConnection c,NpgsqlTransaction t,Guid warehouse,Guid item,int qty)=>
+    internal static async Task<bool> HasAvailable(NpgsqlConnection c,NpgsqlTransaction t,Guid warehouse,Guid item,int qty)=>
         (await Query(c,t,"SELECT item_id FROM stock_balances WHERE warehouse_id=@w AND item_id=@i AND on_hand-reserved>=@q",
             P("w",warehouse),P("i",item),P("q",qty))).Count==1;
-    private static async Task<bool> AvailableSerials(NpgsqlConnection c,NpgsqlTransaction t,Guid warehouse,Guid item,string[] serials)
+    internal static async Task<bool> AvailableSerials(NpgsqlConnection c,NpgsqlTransaction t,Guid warehouse,Guid item,string[] serials)
     {
         if(serials.Length==0)return true;
         return (await Query(c,t,"""
@@ -50,14 +50,14 @@ public static class Warehouse
               AND reservation_id IS NULL AND equipment_id IS NULL
             """,P("w",warehouse),P("i",item),P("serials",serials))).Count==serials.Length;
     }
-    private static async Task Credit(NpgsqlConnection c,NpgsqlTransaction t,Guid w,Guid i,int q)
+    internal static async Task Credit(NpgsqlConnection c,NpgsqlTransaction t,Guid w,Guid i,int q)
     {
         await NetworkManagement.Execute(c,t,"""
             INSERT INTO stock_balances(warehouse_id,item_id,on_hand) VALUES(@w,@i,@q)
             ON CONFLICT(warehouse_id,item_id) DO UPDATE SET on_hand=stock_balances.on_hand+EXCLUDED.on_hand
             """,P("w",w),P("i",i),P("q",q));
     }
-    private static async Task Movement(NpgsqlConnection c,NpgsqlTransaction t,HttpContext ctx,Guid request,string action,
+    internal static async Task Movement(NpgsqlConnection c,NpgsqlTransaction t,HttpContext ctx,Guid request,string action,
         Guid item,Guid? from,Guid? to,Guid? reservation,int qty,string[] serials,string reference)
     {
         await NetworkManagement.Execute(c,t,"""
@@ -249,12 +249,20 @@ public static class Warehouse
         }
         else
         {
-            await Credit(c,t,source,item,qty);
-            foreach(var serial in serials)
-                await NetworkManagement.Execute(c,t,"INSERT INTO stock_serials(item_id,serial,warehouse_id) VALUES(@i,@s,@w)",P("i",item),P("s",serial),P("w",source));
-            await Movement(c,t,ctx,input.RequestId,"receive",item,null,source,null,qty,serials,reference);
+            await ReceiveLocked(c,t,ctx,input.RequestId,item,source,qty,serials,reference);
         }
         await t.CommitAsync();return Results.Ok(new{ok=true,requestId=input.RequestId});
+    }
+    // Caller must hold the inventory advisory lock and validate quantity,
+    // serials, warehouse and replay. Procurement uses this exact same writer.
+    internal static async Task ReceiveLocked(NpgsqlConnection c,NpgsqlTransaction t,HttpContext ctx,Guid request,
+        Guid item,Guid warehouse,int qty,string[] serials,string reference)
+    {
+        await Credit(c,t,warehouse,item,qty);
+        foreach(var serial in serials)
+            await NetworkManagement.Execute(c,t,"INSERT INTO stock_serials(item_id,serial,warehouse_id) VALUES(@i,@s,@w)",
+                P("i",item),P("s",serial),P("w",warehouse));
+        await Movement(c,t,ctx,request,"receive",item,null,warehouse,null,qty,serials,reference);
     }
     private static async Task<IResult> Reserve(HttpContext ctx,NpgsqlDataSource db,StockReserveInput input)
     {
