@@ -40,9 +40,14 @@ api /packages '{"name":"RADIUS CI profile","downloadMbps":20,"uploadMbps":10,"mo
 package="$(id)"
 api /services "{\"customerId\":\"$customer\",\"packageId\":\"$package\",\"username\":\"rad-ci-user\",\"state\":\"pending\",\"staticIpv4\":null}"
 service="$(id)"
+api /ipam/pools '{"name":"RADIUS wire pool","subnet":"203.0.113.0/29","gateway":"203.0.113.1","confirm":true}'
+pool="$(id)"
+api "/ipam/pools/$pool/allocate" "{\"serviceId\":\"$service\",\"confirm\":true}"
+grep -q '"address":"203.0.113.2"' "$BASE/result"
 api "/services/$service/credentials" '{"password":"RadiusCiUserPassword2026"}'
 docker compose exec -T radius radtest rad-ci-user RadiusCiUserPassword2026 127.0.0.1 0 testing123 | tee "$BASE/authok"
 grep -q 'Access-Accept' "$BASE/authok"
+grep -Eq 'Framed-IP-Address[[:space:]]*=[[:space:]]*203\.0\.113\.2([[:space:]]|$)' "$BASE/authok"
 docker compose exec -T radius radtest rad-ci-user wrong-password 127.0.0.1 0 testing123 | tee "$BASE/authfail" || true
 grep -q 'Access-Reject' "$BASE/authfail"
 api "/services/$service/suspend" '{}'

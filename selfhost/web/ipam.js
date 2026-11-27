@@ -6,11 +6,11 @@ async function ipamConsole(el){
  const editable=role==='admin';
  el.insertAdjacentHTML('beforeend','<div class="toolbar"><div><h1>IPv4 address management</h1><p class="sub">Dedicated static subscriber pools · RADIUS provisioning</p></div><div class="buttons"><button id="ipam-refresh">Refresh</button>'+(editable?'<button id="ipam-create" class="primary">+ Pool</button>':'')+'</div></div><p class="note">Use only ranges you control and exclude them from RouterOS dynamic PPP, DHCP and other allocation systems. Unclosed RADIUS accounting blocks reuse. No router configuration is pushed.</p><div id="ipam-pools"></div><div id="ipam-detail"></div>');
  const poolArea=el.querySelector('#ipam-pools'),detail=el.querySelector('#ipam-detail');
- const failure=err=>{if(el.isConnected)notice(err.message,true)};
+ const failure=err=>{if(poolArea.isConnected)notice(err.message,true)};
  let selected=null,request=0;
  async function load(){
   const pools=await api('/ipam/pools');
-  if(!el.isConnected)return;
+  if(!poolArea.isConnected)return;
   poolArea.innerHTML='<div class="card tablewrap"><table><thead><tr><th>Pool</th><th>Subnet</th><th>Gateway</th><th>Usable hosts</th><th>Assigned</th><th>Reservations</th><th></th></tr></thead><tbody>'+pools.map(p=>'<tr><td>'+esc(p.name)+'</td><td>'+esc(p.subnet)+'</td><td>'+esc(p.gateway||'—')+'</td><td>'+esc(p.usable)+'</td><td>'+esc(p.assigned)+'</td><td>'+esc(p.reserved)+'</td><td><button data-pool="'+esc(p.id)+'">Inspect</button></td></tr>').join('')+'</tbody></table>'+(pools.length?'':'<p>No pools configured.</p>')+'</div>';
   poolArea.querySelectorAll('[data-pool]').forEach(b=>b.onclick=()=>{selected=pools.find(p=>p.id===b.dataset.pool);show().catch(failure)});
   if(selected){selected=pools.find(p=>p.id===selected.id)||null;if(selected)await show()}
@@ -28,7 +28,7 @@ async function ipamConsole(el){
   const p=selected,seq=++request;
   detail.textContent='Loading addresses…';
   const rows=await api('/ipam/pools/'+p.id+'/addresses');
-  if(!el.isConnected||seq!==request)return;
+  if(!poolArea.isConnected||seq!==request)return;
   const counts={};rows.forEach(x=>counts[x.state]=(counts[x.state]||0)+1);
   detail.innerHTML='<div class="toolbar topgap"><div><h2>'+esc(p.name)+' · '+esc(p.subnet)+'</h2><p class="sub">'+Object.entries(counts).map(([k,v])=>esc(k.replaceAll('_',' '))+': '+v).join(' · ')+'</p></div>'+(editable?'<button id="ipam-auto" class="primary">Allocate first free</button>':'')+'</div><input id="ipam-search" placeholder="Filter address, account, state" aria-label="Filter addresses"><div class="buttons topgap"><button id="ipam-prev">Previous</button><span id="ipam-page"></span><button id="ipam-next">Next</button></div><div id="ipam-addresses"></div>';
   let page=0;
