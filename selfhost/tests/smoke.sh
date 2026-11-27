@@ -5,7 +5,8 @@ BASE="$(mktemp -d)"
 PID=""
 MOCK_PID=""
 MONITOR_PID=""
-trap 'if [ -n "$MONITOR_PID" ]; then kill "$MONITOR_PID" 2>/dev/null || true; fi; if [ -n "$MOCK_PID" ]; then kill "$MOCK_PID" 2>/dev/null || true; fi; if [ -n "$PID" ]; then kill "$PID" 2>/dev/null || true; fi; cat "$BASE/server.log" 2>/dev/null | tail -35 || true; rm -rf "$BASE"' EXIT
+ROS_PID=""
+trap 'if [ -n "$ROS_PID" ]; then kill "$ROS_PID" 2>/dev/null || true; fi; if [ -n "$MONITOR_PID" ]; then kill "$MONITOR_PID" 2>/dev/null || true; fi; if [ -n "$MOCK_PID" ]; then kill "$MOCK_PID" 2>/dev/null || true; fi; if [ -n "$PID" ]; then kill "$PID" 2>/dev/null || true; fi; cat "$BASE/server.log" 2>/dev/null | tail -35 || true; rm -rf "$BASE"' EXIT
 export ASPNETCORE_URLS="http://127.0.0.1:18990"
 export Database__ConnectionString="Host=127.0.0.1;Port=55432;Database=netforge_ci;Username=netforge_ci;Password=netforge_test_very_strong_secret"
 export NETFORGE_ADMIN_USER="ciadmin"
@@ -29,6 +30,10 @@ SNMPWRAP
 chmod 700 "$BASE/netforge-snmpget-ci"
 export NETFORGE_SNMPGET_PATH="$BASE/netforge-snmpget-ci"
 
+# Use a specific non-loopback IPv4 host address and a /32 allowlist for CI only.
+export NETFORGE_CI_ROUTEROS_IP="$(hostname -I | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)"
+test -n "$NETFORGE_CI_ROUTEROS_IP"
+export NETFORGE_ROUTEROS_ALLOWED_CIDRS="$NETFORGE_CI_ROUTEROS_IP/32"
 dotnet run --project selfhost/src/NetForge.Api/NetForge.Api.csproj -c Release --no-build >"$BASE/server.log" 2>&1 &
 PID="$!"
 BASEURL="http://127.0.0.1:18990"
@@ -698,5 +703,6 @@ source selfhost/tests/assurance-smoke.sh
 source selfhost/tests/sla-probes-smoke.sh
 source selfhost/tests/subscriber-probes-smoke.sh
 source selfhost/tests/ipam-smoke.sh
+source selfhost/tests/routeros-smoke.sh
 
 echo "NetForge .NET 11 / PostgreSQL API smoke passed."

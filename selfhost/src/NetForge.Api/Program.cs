@@ -52,6 +52,7 @@ builder.Services.AddHostedService<TelemetryRetentionWorker>();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
+    options.AddConcurrencyLimiter("routeros-read", limiter=>{limiter.PermitLimit=4;limiter.QueueLimit=0;});
     options.AddConcurrencyLimiter("probe-ingest", limiter => { limiter.PermitLimit=32; limiter.QueueLimit=0; });
     options.AddPolicy("login", ctx =>
         RateLimitPartition.GetFixedWindowLimiter(
@@ -168,6 +169,7 @@ authorized.MapPost("/logout", async (HttpContext ctx,NpgsqlDataSource db) =>
 Endpoints.Map(authorized);
 StaffSecurity.Map(authorized);
 Ipam.Map(authorized);
+RouterOsInventory.Map(authorized);
 NetworkManagement.Map(authorized);
 ServiceLifecycle.Map(authorized);
 CustomerPortal.MapStaff(authorized);
