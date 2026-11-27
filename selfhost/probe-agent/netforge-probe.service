@@ -1,0 +1,24 @@
+# root/selfhost/probe-agent/netforge-probe.service
+[Unit]
+Description=NetForge authorized subscriber-side diagnostic sample
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=netforge-probe
+Group=netforge-probe
+ExecStart=/usr/bin/python3 /opt/netforge-probe/netforge_probe.py --config /etc/netforge-probe/agent.json
+TimeoutStartSec=40
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

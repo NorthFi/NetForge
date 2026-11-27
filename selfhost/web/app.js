@@ -2,7 +2,7 @@
 'use strict';
 const root=document.querySelector('#root'),identity=document.querySelector('#identity'),logout=document.querySelector('#logout');
 let csrf='',role='',username='',tab='Dashboard',data={};
-const views=['Dashboard','Customers','Services','Packages','Highsites','Sectors','Equipment','RADIUS NAS','RADIUS Sessions','RADIUS Usage','RADIUS Operations','Tickets','Billing','Bank Reconciliation','Financial Ledger','Billing Policy','Invoice Automation','Notifications','Network Monitoring','NOC Incidents','Service Assurance','SLA Credits','CPE Reachability','SNMP Telemetry','RF Metrics','Highsite Impact','Telemetry Retention','Customer Portal','Staff'];
+const views=['Dashboard','Customers','Services','Packages','Highsites','Sectors','Equipment','RADIUS NAS','RADIUS Sessions','RADIUS Usage','RADIUS Operations','Tickets','Billing','Bank Reconciliation','Financial Ledger','Billing Policy','Invoice Automation','Notifications','Network Monitoring','NOC Incidents','Service Assurance','SLA Credits','CPE Reachability','Subscriber Probes','SNMP Telemetry','RF Metrics','Highsite Impact','Telemetry Retention','Customer Portal','Staff'];
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
 const money=n=>new Intl.NumberFormat('en-ZA',{style:'currency',currency:'ZAR'}).format(Number(n)||0);
 async function api(path,method='GET',payload){
@@ -26,7 +26,7 @@ async function boot(skipAuth=false){
   root.innerHTML='<div class="shell"><nav id="nav"></nav><main id="content"></main></div>';
   views.forEach(v=>{if((v==='Staff'||v==='Customer Portal'||v==='Bank Reconciliation'||v==='Financial Ledger'||v==='Invoice Automation'||v==='Notifications')&&role!=='admin')return;if(v==='Billing'&&!['admin','dispatcher'].includes(role))return;
    if(v==='Billing Policy'&&role!=='admin')return;
-   if(['Network Monitoring','NOC Incidents','Service Assurance','SLA Credits','CPE Reachability','SNMP Telemetry','RF Metrics','Highsite Impact'].includes(v)&&!['admin','dispatcher'].includes(role))return;
+   if(['Network Monitoring','NOC Incidents','Service Assurance','SLA Credits','CPE Reachability','Subscriber Probes','SNMP Telemetry','RF Metrics','Highsite Impact'].includes(v)&&!['admin','dispatcher'].includes(role))return;
    if(v==='Telemetry Retention'&&role!=='admin')return;
    if(['RADIUS Usage','RADIUS Operations'].includes(v)&&!['admin','dispatcher'].includes(role))return;if(v==='RADIUS NAS'&&!['admin','dispatcher'].includes(role))return;
    let b=document.createElement('button');b.textContent=v;b.onclick=()=>{tab=v;render()};b.dataset.tab=v;root.querySelector('#nav').append(b)});
@@ -69,6 +69,7 @@ function render(){
  else if(tab==='Service Assurance')assuranceConsole(content);
  else if(tab==='SLA Credits')slaCreditConsole(content);
  else if(tab==='CPE Reachability')cpeAssuranceConsole(content);
+ else if(tab==='Subscriber Probes')subscriberProbeConsole(content);
  else if(tab==='SNMP Telemetry')snmpConsole(content);
  else if(tab==='RF Metrics')rfConsole(content);
  else if(tab==='Telemetry Retention')retentionConsole(content);
